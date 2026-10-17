@@ -125,9 +125,8 @@ basis for a future `dots:prune`.
 ## Trees and `dots.lua`
 
 `dots:apply` walks a source tree (`lib/plan.lua`, also usable directly via
-`require("pkgs/dots/plan")`; `tree.md`'s rules are implemented and tested
-there). The walk is depth-first with names sorted, so the entry list is
-deterministic:
+`require("pkgs/dots/plan")`). The walk is depth-first with names sorted, so
+the entry list is deterministic:
 
 - Each file yields an entry: `dest = <dest> .. "/" .. <relpath>` (call-site
   `dest` defaults to `~`), `src = <relpath>`, plus attributes from dots.lua.
@@ -158,8 +157,11 @@ return {
   -- "name/" a whole subtree (never descended into):
   ["$ignore"]   = { "*.bak", "secrets/", "**/.DS_Store" },
 
-  -- which files here may replace a differing existing file:
-  -- a boolean, or function(name) -> bool
+  -- which files here may replace a differing existing file at the
+  -- destination (a "conflict" otherwise). A boolean applies to all files
+  -- here. A function is called once per file (by name); true = this file
+  -- may overwrite, false = it may not. The example below says: only
+  -- "*.local" files here may overwrite what is already installed:
   ["$override"] = function(name) return name:match("%.local$") ~= nil end,
 }
 ```
