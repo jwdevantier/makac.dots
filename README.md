@@ -47,7 +47,7 @@ Entry fields (`with`):
 |-------------|-------------------------------------------------------------------|
 | `dest`      | required — must be `~`, `~/...` or absolute; `~` means the **target** session's `$HOME`. Relative dests, `~user` and `..` segments are rejected |
 | `content`   | inline file content (exclusive with `src`)                         |
-| `src`       | source file, relative to `root` when given                         |
+| `src`       | source file: relative to `root` when given, or absolute/`~`-prefixed (used as-is) |
 | `root`      | tree root for `src`                                                |
 | `absent`    | ensure the path is removed (never removes directories)             |
 | `skip`      | do not manage this entry (skipped step)                            |
@@ -71,12 +71,49 @@ symlink.
 
 ### `dots:apply` — the primary action
 
-Walks `with.root` (a source tree with `dots.lua` sidecars — see
-[Trees and sidecars](#trees-and-dotslua-sidecars) below) or takes `with.files` (a list of entries), and issues one
-non-fatal inner `dots:file`/`dots:link` step per entry: per-file failures are
-data (`out.failed`), never an abort — unless `with.strict = true`. `changed`
-is true iff any file changed; `with.check = true` reports without writing.
-Extra fields: `dest` (default `~/`), `override` (call-site policy), `target`.
+The normal way to use the package: point it at a source tree (see
+[Trees and sidecars](#trees-and-dotslua-sidecars)) and it converges every
+file in it:
+
+```lua
+local r = step { uses = "dots:apply", name = "dotfiles", with = {
+  root = "tree",        -- source tree relative to the project root
+  dest = "~",           -- destination prefix (default "~")
+  override = false,     -- call-site policy: may differing files be replaced?
+  -- target = my_ssh_target,  -- default makac.host
+  -- check = true,       -- report would-change, write nothing
+  -- strict = true,      -- abort the workflow if any file fails
+} }
+print("changed: " .. #r.out.changed, "failed: " .. #r.out.failed)
+```
+
+Inputs: `root` (a source tree to walk) **or** `files` (a pre-built list of
+entry tables, the escape hatch); `root` wins when both are given, and
+neither is an error.
+
+Every entry becomes its own inner step (one `ok`/`changed`/`skipped`/
+`failed` line per file), and per-file failures are **data, never an
+abort**: the loop continues past conflicts and the result tells you what
+happened:
+
+```lua
+r = {
+  changed = bool,           -- true iff at least one entry changed
+  out = {
+    changed = { "~/a.conf", ... },        -- entries that changed
+    ok      = { "~/b.conf", ... },        -- already at the desired state
+    failed  = { { path = ..., err = ... }, ... },  -- conflicts and errors
+    skipped = { "~/c.conf", ... },        -- entries with skip = true
+  },
+  err = "...",              -- set ONLY with strict = true and failures present
+}
+```
+
+Failure reasons are also written to stderr as they happen. `check = true`
+propagates to every entry — nothing is written, but conflicts still count
+as failures (a conflict means the state cannot converge). Entries created
+by the walk get their `src` resolved against `root` by the inner steps;
+absolute or `~`-prefixed `src` values are used as-is.
 
 ## Managed journal
 
