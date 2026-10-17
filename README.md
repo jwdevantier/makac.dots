@@ -167,6 +167,32 @@ return {
   -- true = this file may overwrite, false = it may not. The example below
   -- says: only "*.local" files here may overwrite what is already installed:
   ["$override"] = function(file) return file.name:match("%.local$") ~= nil end,
+
+  -- context for the functions below: a table (or function returning one),
+  -- computed once per directory, passed as their 2nd argument:
+  ["$ctx"]      = { theme = "dark" },
+
+  -- a FUNCTION value is shorthand for { renderer = fn }: it is called with
+  -- the file's bytes (+ $ctx) and returns the content (a string, or a table
+  -- of attrs incl. "content"). With NO file of that name on disk it is a
+  -- virtual entry: fn(nil, ctx) and its return value becomes the file.
+  ["motto.txt"] = function(_, ctx) return "theme: " .. ctx.theme .. "\n" end,
+}
+```
+
+Because functions receive `$ctx`, template helpers become shareable —
+impossible with closures alone:
+
+```lua
+-- defaults.lua (outside the tree): a minimal {var} templating helper
+M.tpl = function(content, ctx) return (content:gsub("{(%w+)}", ctx or {})) end
+
+-- tree/.ssh/dots.lua
+local d = dofile(PROJECT_DIR .. "/defaults.lua")
+return {
+  ["$ctx"]   = { identity = "jwd@example.com" },
+  ["config"] = { mode = "0600", renderer = d.tpl }, -- tree file has {identity}
+  ["known"]  = function(_, ctx) return "user=" .. ctx.identity end, -- virtual
 }
 ```
 
