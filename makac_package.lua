@@ -1,6 +1,6 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- The dots package (design/main.md): a desired-state converger for dotfiles.
+-- The dots package: a desired-state converger for dotfiles.
 -- Walk a tree of source files (+ `dots.lua` sidecars) and materialize the
 -- plan onto a target (host or SSH remote).
 --
@@ -14,10 +14,10 @@ local action_apply = require("./action_apply")
 
 return {
 	actions = {
-		-- ensure ONE file/symlink at dest matches the entry (design §dots:file, §dots:link)
+		-- ensure ONE file/symlink at dest matches the entry
 		file = action_file.file,
 		link = action_file.link,
-		-- walk a tree (or take with.files) and converge every entry (design §Tree walk)
+		-- walk a tree (or take with.files) and converge every entry
 		apply = action_apply.apply,
 	},
 }

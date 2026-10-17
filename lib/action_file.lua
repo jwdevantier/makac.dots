@@ -1,7 +1,7 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- dots:file — the primitive action (design/main.md §The primitive action:
--- "dots:file"). One effect: ensure the node at dest matches the entry.
+-- dots:file — the primitive action. One effect: ensure the node at dest
+-- matches the entry.
 -- Target-agnostic via lib/materialize.lua; per-file failures set `err`
 -- (dots:apply turns them into data).
 
@@ -10,7 +10,7 @@ local journal = require("./journal")
 
 local M = {}
 
---- Record a path in the managed journal (design §Managed journal) after a
+--- Record a path in the managed journal after a
 --- successful mutation. Called on write / remove / chmod / chown / symlink
 --- sites (all already guarded against check mode). NEVER fails the step: a
 --- lost journal line is recoverable, a hard error would break applies for no
@@ -38,8 +38,8 @@ local function resolve_target(with)
 	return t
 end
 
---- Ensure the node at with.dest matches the entry. See design §Entry schema
---- for the field contract.
+--- Ensure the node at with.dest matches the entry. The field contract
+--- ('with' table) is documented in README.md.
 function M.file(with)
 	if type(with) ~= "table" then
 		return fail("'with' must be a table")
@@ -127,7 +127,7 @@ function M.file(with)
 	end
 
 	-- mode / owner: after a write they are always applied when specified (the
-	-- temp-then-move write lands 0600, design §Entry schema); on a no-write
+	-- temp-then-move write lands 0600); on a no-write
 	-- they are applied only on drift.
 	local changed = wrote
 	if with.mode ~= nil then
@@ -166,8 +166,7 @@ function M.file(with)
 	return { changed = changed, out = { path = path, sha256 = dsha } }
 end
 
---- dots:link — opt-in stow-style symlink entries (design §The model: "Link
---- is an opt-in verb... It cannot carry mode/owner."). with.link is the
+--- dots:link — opt-in stow-style symlink entries. with.link is the
 --- string to store in the symlink, relative or absolute, verbatim.
 function M.link(with)
 	if type(with) ~= "table" then

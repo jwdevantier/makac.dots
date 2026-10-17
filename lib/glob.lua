@@ -1,6 +1,6 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- glob matching for `$ignore` patterns (design/main.md §Ignore):
+-- glob matching for `$ignore` patterns:
 -- `*` matches within one path segment, `**` across segments, a trailing
 -- `/` matches a directory and everything under it. Only `*` and `**` are
 -- special (character classes are not supported). Patterns are relative to

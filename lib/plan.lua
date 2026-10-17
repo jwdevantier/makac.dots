@@ -1,14 +1,14 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- The tree walk (design/main.md §The tree manifest: dots.lua, §Producing
--- steps): walk a source tree of files (+ `dots.lua` sidecars) into the entry
--- list every action consumes. This is the producer half — no action semantics
--- live here. All reads are HOST-side (the tree lives in the project repo).
+-- The tree walk: walk a source tree of files (+ `dots.lua` sidecars) into
+-- the entry list every action consumes. This is the producer half — no
+-- action semantics live here. All reads are HOST-side (the tree lives in
+-- the project repo).
 --
 -- Settled semantics implemented here (do not reopen):
 -- - a sidecar is the complete, self-contained policy for its own directory;
 --   there is no inheritance and no cross-directory merging.
--- - `$default` carries ATTRIBUTES ONLY, for files in this directory with no
+-- - `$default_attrs` carries ATTRIBUTES ONLY, for files in this directory with no
 --   explicit entry; `absent`/`skip` inside it are an error.
 -- - `$ignore` is a list of glob patterns (lib/glob.lua); matching files are
 --   skipped, matching directories are not descended into. `.git`, `.makac`
@@ -51,7 +51,7 @@ function M.load_sidecar(dir)
 	return res
 end
 
--- attributes a sidecar entry / $default may carry (copy-through set)
+-- attributes a sidecar entry / $default_attrs may carry (copy-through set)
 local function merge_attrs(dst, src, what, path)
 	if src == nil then
 		return
@@ -130,16 +130,16 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 	local scpath = dir .. "/dots.lua"
 
 	if sidecar ~= nil then
-		local def = sidecar["$default"]
+		local def = sidecar["$default_attrs"]
 		if def ~= nil then
 			if type(def) ~= "table" then
-				error(("plan: '$default' in '%s' must be a table of attributes"):format(scpath))
+				error(("plan: '$default_attrs' in '%s' must be a table of attributes"):format(scpath))
 			end
 			if def.absent ~= nil or def.skip ~= nil then
-				error(("plan: '$default' in '%s' carries attributes only; 'absent'/'skip' are never inherited"):format(scpath))
+				error(("plan: '$default_attrs' in '%s' carries attributes only; 'absent'/'skip' are never inherited"):format(scpath))
 			end
 			if def.override ~= nil then
-				error(("plan: '$default' in '%s' carries attributes only; override is a policy — use '$override'"):format(scpath))
+				error(("plan: '$default_attrs' in '%s' carries attributes only; override is a policy — use '$override'"):format(scpath))
 			end
 		end
 		local ign = sidecar["$ignore"]
@@ -192,8 +192,8 @@ function M.synthesize(relpath, abspath, name, sidecar, st, dir, opts)
 
 	local entry = {}
 	merge_attrs(entry, explicit, "entry '" .. name .. "'", scpath)
-	if sidecar and sidecar["$default"] and explicit == nil then
-		merge_attrs(entry, sidecar["$default"], "$default", scpath)
+	if sidecar and sidecar["$default_attrs"] and explicit == nil then
+		merge_attrs(entry, sidecar["$default_attrs"], "$default_attrs", scpath)
 	end
 
 	entry.dest = opts.dest .. "/" .. relpath

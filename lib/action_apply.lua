@@ -1,12 +1,11 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- dots:apply — the primary action (design/main.md §Producing steps: the tree,
--- and dots:apply). Walks with.root (or takes the with.files escape hatch)
--- into an entry list via lib/plan.lua and issues one inner
+-- dots:apply — the primary action. Walks with.root (or takes the with.files
+-- escape hatch) into an entry list via lib/plan.lua and issues one inner
 -- `step{uses="dots:file"|"dots:link", name=entry.dest, with=entry}` per
 -- entry, so every file logs its own ok/changed/skipped/failed line.
 --
--- Failure semantics (design §Result shape — the workflow decides fatality):
+-- Failure semantics (the workflow decides fatality):
 -- - EVERY entry is visited regardless of individual failures (each inner
 --   step is pcall'd — step() raises on action failure).
 -- - per-file failure is DATA in out.failed, so `err` stays UNSET even when
@@ -24,8 +23,8 @@ local function fail(msg)
 	return { err = "dots:apply: " .. msg }
 end
 
---- Apply an entry list to a target. See design §Producing steps for the
---- result-shape contract.
+--- Apply an entry list to a target. The result-shape contract is
+--- documented in README.md.
 function M.apply(with)
 	if type(with) ~= "table" then
 		return fail("'with' must be a table")

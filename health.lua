@@ -6,7 +6,7 @@
 -- The target-side tools the actions shell out to (`mkdir`, `mv`, `chmod`,
 -- `chown`, `ln`, `test`, `rm`) run on the TARGET (host or SSH remote) and so
 -- cannot be probed from here; they are POSIX utilities every supported
--- target must provide (design/main.md §Target).
+-- target must provide.
 
 return function(health, pkg_name)
 	local function on_path(bin)
@@ -29,9 +29,9 @@ return function(health, pkg_name)
 
 	health.start("hashing")
 
-	-- hashing is host-side via makac.fs.sha256 (portable; design §Changed
-	-- detection): the desired bytes and the fetched current bytes are hashed
-	-- on the machine running makac.
+	-- hashing is host-side via makac.fs.sha256 (portable — no sha256sum is
+	-- needed on the target): the desired bytes and the fetched current bytes
+	-- are hashed on the machine running makac.
 	health.ok("hashing is host-side via makac.fs.sha256 (portable)")
 	-- sha256sum on PATH is an optional fast path only; not required.
 	local s = on_path("sha256sum")

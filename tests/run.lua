@@ -75,15 +75,15 @@ t.case("txtar: no markers means everything is comment", function()
 end)
 
 t.case("txtar: unpack writes the tree into a temp dir", function()
-	local dir = txtar.unpack([[tree used by a fake target
--- dots.lua --
-return {}
+	local dir = txtar.unpack([[a small nested fixture
+-- app.conf --
+key = value
 -- ssh/config --
 Host *
 -- sub/real.conf --
 real = true
 ]])
-	t.eq(read(dir .. "/dots.lua"), "return {}\n")
+	t.eq(read(dir .. "/app.conf"), "key = value\n")
 	t.eq(read(dir .. "/ssh/config"), "Host *\n")
 	t.eq(read(dir .. "/sub/real.conf"), "real = true\n", "parents are created")
 end)
@@ -366,8 +366,9 @@ end)
 
 -- ------------------------------------------- directory creation (mkdir -p)
 --
--- Both write paths run mkdir_parents before touching dest (design §The
--- primitive action step 8; link §'dest absent'). These cases pin the
+-- Both write paths run mkdir_parents before touching dest (a write is
+-- mkdir -p of the parent, then temp-then-move; a link is mkdir -p of the
+-- parent, then ln -s). These cases pin the
 -- directory-creation behavior itself: depth, partial state, blockers,
 -- symlinked intermediates, and that non-writing paths create nothing.
 
@@ -656,12 +657,16 @@ local function by_dest(entries)
 end
 
 t.case("tree: plain tree, dest/src and deterministic order", function()
-	local root = new_tree("plain")
-	wf(root .. "/z.txt", "z")
-	wf(root .. "/a.txt", "a")
-	wf(root .. "/m/b.txt", "b")
-	wf(root .. "/a-dir/x.txt", "x")
-	makac.fs.mkdir_p(root .. "/empty") -- empty dirs ship nothing
+	local root = txtar.unpack([[-- z.txt --
+z
+-- a.txt --
+a
+-- m/b.txt --
+b
+-- a-dir/x.txt --
+x
+]])
+	makac.fs.mkdir_p(root .. "/empty") -- empty dirs ship nothing (txtar cannot express one)
 	local entries = plan.tree(root)
 	t.eq(dests(entries), "~/a-dir/x.txt,~/a.txt,~/m/b.txt,~/z.txt",
 		"depth-first, names sorted")
@@ -673,89 +678,115 @@ t.case("tree: plain tree, dest/src and deterministic order", function()
 	t.eq(by_dest(entries2)["/etc/a.txt"] ~= nil, true, "dest prefix, trailing / normalized")
 end)
 
-t.case("tree: $default applies to unlisted files only, never subdirs", function()
-	local root = new_tree("default")
-	wf(root .. "/dots.lua", [[
+t.case("tree: $default_attrs applies to unlisted files only, never subdirs", function()
+	local root = txtar.unpack([[explicit entry wins; $default_attrs fills gaps, never reaches subdirs
+-- dots.lua --
 return {
-	["$default"] = { mode = "0600" },
+	["$default_attrs"] = { mode = "0600" },
 	["listed.conf"] = { mode = "0644", owner = "root:root" },
-}]])
-	wf(root .. "/listed.conf", "l")
-	wf(root .. "/unlisted.conf", "u")
-	wf(root .. "/sub/inner.conf", "i")
+}
+-- listed.conf --
+l
+-- unlisted.conf --
+u
+-- sub/inner.conf --
+i
+]])
 	local m = by_dest(plan.tree(root))
 	t.eq(m["~/listed.conf"].mode, "0644", "explicit entry wins")
 	t.eq(m["~/listed.conf"].owner, "root:root")
-	t.eq(m["~/unlisted.conf"].mode, "0600", "$default fills the gap")
-	t.eq(m["~/sub/inner.conf"].mode, nil, "$default is strictly directory-local")
+	t.eq(m["~/unlisted.conf"].mode, "0600", "$default_attrs fills the gap")
+	t.eq(m["~/sub/inner.conf"].mode, nil, "$default_attrs is strictly directory-local")
 end)
 
-t.case("tree: $default with absent/skip/override is an error", function()
+t.case("tree: $default_attrs with absent/skip/override is an error", function()
 	for _, key in ipairs({ "absent", "skip", "override" }) do
 		local root = new_tree("baddefault")
-		wf(root .. "/dots.lua", ("return { ['$default'] = { %s = true } }"):format(key))
+		wf(root .. "/dots.lua", ("return { ['$default_attrs'] = { %s = true } }"):format(key))
 		wf(root .. "/f", "f")
 		local ok, err = pcall(plan.tree, root)
-		t.truthy(not ok, "$default with " .. key .. " must fail")
-		t.contains(tostring(err), "$default")
+		t.truthy(not ok, "$default_attrs with " .. key .. " must fail")
+		t.contains(tostring(err), "$default_attrs")
 	end
 end)
 
 t.case("tree: $ignore files and dirs, ** across segments", function()
-	local root = new_tree("ignore")
-	wf(root .. "/dots.lua", [[
-return { ["$ignore"] = { "*.bak", "secrets/", "**/.DS_Store" } }]])
-	wf(root .. "/keep.conf", "k")
-	wf(root .. "/drop.bak", "d")
-	wf(root .. "/secrets/password.txt", "p")
-	wf(root .. "/sub/x.conf", "x")
-	wf(root .. "/sub/.DS_Store", "junk")
-	wf(root .. "/sub/deep/.DS_Store", "junk")
+	local root = txtar.unpack([[-- dots.lua --
+return { ["$ignore"] = { "*.bak", "secrets/", "**/.DS_Store" } }
+-- keep.conf --
+k
+-- drop.bak --
+d
+-- secrets/password.txt --
+p
+-- sub/x.conf --
+x
+-- sub/.DS_Store --
+junk
+-- sub/deep/.DS_Store --
+junk
+]])
 	local entries = plan.tree(root)
 	t.eq(dests(entries), "~/keep.conf,~/sub/x.conf")
 end)
 
 t.case("tree: .git, .makac, dots.lua are auto-ignored everywhere", function()
-	local root = new_tree("autoignore")
-	wf(root .. "/.git/config", "g")
-	wf(root .. "/.makac/dots/host", "m")
-	wf(root .. "/dots.lua", "return {}")
-	wf(root .. "/sub/dots.lua", "return {}")
-	wf(root .. "/sub/.git/x", "g")
-	wf(root .. "/real.conf", "r")
+	local root = txtar.unpack([[-- .git/config --
+g
+-- .makac/dots/host --
+m
+-- dots.lua --
+return {}
+-- sub/dots.lua --
+return {}
+-- sub/.git/x --
+g
+-- real.conf --
+r
+]])
 	-- only real.conf; sub's dots.lua is reserved, sub/.git dropped
 	t.eq(dests(plan.tree(root)), "~/real.conf")
 end)
 
 t.case("tree: nested sidecars are independent", function()
-	local root = new_tree("nested")
-	wf(root .. "/dots.lua", [[
-return { ["$default"] = { mode = "0644" } }]])
-	wf(root .. "/sub/dots.lua", [[
-return { ["$default"] = { mode = "0600" }, ["$ignore"] = { "tmp/" } }]])
-	wf(root .. "/top.conf", "t")
-	wf(root .. "/sub/inner.conf", "i")
-	wf(root .. "/sub/tmp/scratch", "s")
-	wf(root .. "/sub/tmp/deep/more", "m")
+	local root = txtar.unpack([[root sidecar: mode 0644; sub sidecar: mode 0600 + ignores tmp/
+-- dots.lua --
+return { ["$default_attrs"] = { mode = "0644" } }
+-- sub/dots.lua --
+return { ["$default_attrs"] = { mode = "0600" }, ["$ignore"] = { "tmp/" } }
+-- top.conf --
+t
+-- sub/inner.conf --
+i
+-- sub/tmp/scratch --
+s
+-- sub/tmp/deep/more --
+m
+]])
 	local m = by_dest(plan.tree(root))
 	t.eq(m["~/top.conf"].mode, "0644")
-	t.eq(m["~/sub/inner.conf"].mode, "0600", "nested $default governs its own dir")
+	t.eq(m["~/sub/inner.conf"].mode, "0600", "nested $default_attrs governs its own dir")
 	t.truthy(m["~/sub/tmp/scratch"] == nil, "nested $ignore not descended into")
 	t.truthy(m["~/sub/tmp/deep/more"] == nil)
 end)
 
 t.case("tree: override precedence entry > $override > call-site > false", function()
-	local root = new_tree("override")
-	wf(root .. "/dots.lua", [[
+	local root = txtar.unpack([[predicate selects *.local; explicit entries win over it
+-- dots.lua --
 return {
 	["$override"] = function(name) return name:match("%.local$") ~= nil end,
 	["foo.conf"] = { override = true },
 	["bar.local"] = { override = false },
-}]])
-	wf(root .. "/foo.conf", "f")
-	wf(root .. "/bar.local", "b")
-	wf(root .. "/baz.local", "z")
-	wf(root .. "/plain.conf", "p")
+}
+-- foo.conf --
+f
+-- bar.local --
+b
+-- baz.local --
+z
+-- plain.conf --
+p
+]])
 	-- no call-site override
 	local m = by_dest(plan.tree(root))
 	t.eq(m["~/foo.conf"].override, true, "per-entry wins over the predicate")
@@ -767,30 +798,32 @@ return {
 	t.eq(m2["~/plain.conf"].override, false)
 	t.eq(m2["~/foo.conf"].override, true)
 	-- a sidecar-less tree takes the call-site value
-	local root2 = new_tree("override-callsite")
-	wf(root2 .. "/x.conf", "x")
+	local root2 = txtar.unpack("-- x.conf --\nx\n")
 	t.eq(plan.tree(root2, { override = true })[1].override, true, "call-site default when no sidecar")
 	t.eq(plan.tree(root2)[1].override, false, "false when nothing says otherwise")
 	-- boolean $override
-	local root3 = new_tree("override-bool")
-	wf(root3 .. "/dots.lua", "return { ['$override'] = true }")
-	wf(root3 .. "/y.conf", "y")
+	local root3 = txtar.unpack([[-- dots.lua --
+return { ['$override'] = true }
+-- y.conf --
+y
+]])
 	t.eq(plan.tree(root3)[1].override, true, "plain boolean $override")
 end)
 
 t.case("tree: renderer captured from a sidecar entry", function()
-	local root = new_tree("renderer")
-	wf(root .. "/dots.lua", [[
-return { ["r.conf"] = { renderer = function(c) return c:upper() end } }]])
-	wf(root .. "/r.conf", "r")
+	local root = txtar.unpack([[-- dots.lua --
+return { ["r.conf"] = { renderer = function(c) return c:upper() end } }
+-- r.conf --
+r
+]])
 	local e = plan.tree(root)[1]
 	t.eq(type(e.renderer), "function")
 	t.eq(e.renderer("abc"), "ABC")
 end)
 
 t.case("tree: source symlinks", function()
-	local root = new_tree("symlink")
-	wf(root .. "/real.txt", "content")
+	-- txtar cannot express symlinks, so links are created after the unpack
+	local root = txtar.unpack("-- real.txt --\ncontent\n")
 	makac.fs.symlink("real.txt", root .. "/via-link.txt")
 	-- default: dereference — a regular materialize entry
 	local m = by_dest(plan.tree(root))
@@ -816,13 +849,15 @@ return { ["dangling"] = { reproduce = true } }]])
 end)
 
 t.case("tree: load_sidecar, and sidecar using PROJECT_DIR", function()
-	local root = new_tree("sidecarload")
+	local root = txtar.unpack([[-- shared.lua --
+return { mode = '0600' }
+-- f.conf --
+f
+]])
 	t.eq(plan.load_sidecar(root), nil, "nil when absent")
-	wf(root .. "/shared.lua", "return { mode = '0600' }")
 	wf(root .. "/dots.lua", [[
 local d = dofile(PROJECT_DIR .. "/shared-in-project.lua")
-return { ["$default"] = d }]])
-	wf(root .. "/f.conf", "f")
+return { ["$default_attrs"] = d }]])
 	-- PROJECT_DIR is the makac.dots project root when tests run under it
 	makac.fs.write_file(tostring(PROJECT_DIR) .. "/shared-in-project.lua", "return { mode = '0600' }")
 	local m = by_dest(plan.tree(root))
@@ -842,19 +877,22 @@ local function read_in(tgt, rel)
 end
 
 t.case("apply: 3-file tree, first run changed, second all ok", function()
-	local root = new_tree("apply3")
-	wf(root .. "/a.conf", "aaa")
-	wf(root .. "/sub/b.conf", "bbb")
-	wf(root .. "/sub/deep/c.conf", "ccc")
+	local root = txtar.unpack([==[-- a.conf --
+aaa
+-- sub/b.conf --
+bbb
+-- sub/deep/c.conf --
+ccc
+]==])
 	local tgt = new_target("apply3")
 	local r = action_apply.apply({ root = root, target = tgt })
 	t.eq(r.err, nil)
 	t.eq(r.changed, true, "first run changed")
 	t.eq(#r.out.changed, 3)
 	t.eq(#r.out.failed, 0)
-	t.eq(read_in(tgt, "a.conf"), "aaa")
-	t.eq(read_in(tgt, "sub/b.conf"), "bbb")
-	t.eq(read_in(tgt, "sub/deep/c.conf"), "ccc")
+	t.eq(read_in(tgt, "a.conf"), "aaa\n")
+	t.eq(read_in(tgt, "sub/b.conf"), "bbb\n")
+	t.eq(read_in(tgt, "sub/deep/c.conf"), "ccc\n")
 	-- idempotent: second run is all ok
 	local r2 = action_apply.apply({ root = root, target = tgt })
 	t.eq(r2.err, nil)
@@ -864,34 +902,43 @@ t.case("apply: 3-file tree, first run changed, second all ok", function()
 end)
 
 t.case("apply: one conflict does not stop the loop, err stays unset", function()
-	local root = new_tree("applyconflict")
-	wf(root .. "/first.conf", "one")
-	wf(root .. "/conflicted.conf", "desired")
-	wf(root .. "/last.conf", "three")
+	local root = txtar.unpack([==[-- first.conf --
+one
+-- conflicted.conf --
+desired
+-- last.conf --
+three
+]==])
 	local tgt = new_target("applyconflict")
-	makac.fs.write_file(tgt.root .. "/conflicted.conf", "local edit")
+	txtar.unpack([==[-- conflicted.conf --
+local edit
+]==], tgt.root)
 	local r = action_apply.apply({ root = root, target = tgt })
 	t.eq(r.err, nil, "per-file failure is data, never err")
 	t.eq(r.changed, true, "the other files changed")
 	t.eq(#r.out.failed, 1)
 	t.eq(r.out.failed[1].path, "~/conflicted.conf")
 	t.contains(r.out.failed[1].err, "conflict")
-	t.eq(read_in(tgt, "conflicted.conf"), "local edit", "loser left untouched")
-	t.eq(read_in(tgt, "first.conf"), "one")
+	t.eq(read_in(tgt, "conflicted.conf"), "local edit\n", "loser left untouched")
+	t.eq(read_in(tgt, "first.conf"), "one\n")
 	-- the loop CONTINUED past the failure into the entry after it:
-	t.eq(read_in(tgt, "last.conf"), "three", "entries after the failure still applied")
+	t.eq(read_in(tgt, "last.conf"), "three\n", "entries after the failure still applied")
 end)
 
 t.case("apply: strict=true turns failures into err", function()
-	local root = new_tree("applystrict")
-	wf(root .. "/a.conf", "a")
-	wf(root .. "/b.conf", "b")
+	local root = txtar.unpack([==[-- a.conf --
+a
+-- b.conf --
+b
+]==])
 	local tgt = new_target("applystrict")
-	makac.fs.write_file(tgt.root .. "/a.conf", "differing")
+	txtar.unpack([==[-- a.conf --
+differing
+]==], tgt.root)
 	local r = action_apply.apply({ root = root, target = tgt, strict = true })
 	t.truthy(r.err ~= nil, "strict aborts")
 	t.contains(r.err, "strict")
-	t.eq(read_in(tgt, "b.conf"), "b", "non-failing entries still applied before err")
+	t.eq(read_in(tgt, "b.conf"), "b\n", "non-failing entries still applied before err")
 	-- ... and the strict shape is what makes `step{uses="dots:apply"}` abort
 	local sok = pcall(step, { uses = "dots:apply", name = "strict-apply",
 		with = { root = root, target = tgt, strict = true } })
@@ -905,7 +952,9 @@ end)
 
 t.case("apply: files= escape hatch", function()
 	local tgt = new_target("applyfiles")
-	makac.fs.write_file(tgt.root .. "/gone.conf", "stale")
+	txtar.unpack([==[-- gone.conf --
+stale
+]==], tgt.root)
 	local r = action_apply.apply({
 		target = tgt,
 		files = {
@@ -921,9 +970,11 @@ t.case("apply: files= escape hatch", function()
 end)
 
 t.case("apply: check=true reports without writing", function()
-	local root = new_tree("applycheck")
-	wf(root .. "/a.conf", "aaa")
-	wf(root .. "/b.conf", "bbb")
+	local root = txtar.unpack([==[-- a.conf --
+aaa
+-- b.conf --
+bbb
+]==])
 	local tgt = new_target("applycheck")
 	local r = action_apply.apply({ root = root, target = tgt, check = true })
 	t.eq(r.err, nil)
@@ -944,17 +995,19 @@ t.case("apply: check=true reports without writing", function()
 end)
 
 t.case("apply: link entries route to dots:link", function()
-	local root = new_tree("applylink")
-	wf(root .. "/dots.lua", [[
-return { ["linked"] = { link = "../elsewhere/target" } }]])
-	wf(root .. "/linked", "ignored bytes")
-	wf(root .. "/plain.conf", "p")
+	local root = txtar.unpack([==[-- dots.lua --
+return { ["linked"] = { link = "../elsewhere/target" } }
+-- linked --
+ignored bytes
+-- plain.conf --
+p
+]==])
 	local tgt = new_target("applylink")
 	local r = action_apply.apply({ root = root, target = tgt })
 	t.eq(r.err, nil)
 	t.eq(r.changed, true)
 	t.eq(makac.fs.stat(tgt.root .. "/linked").type, "link", "a symlink was made")
-	t.eq(read_in(tgt, "plain.conf"), "p")
+	t.eq(read_in(tgt, "plain.conf"), "p\n")
 end)
 
 t.case("apply: requires root or files", function()
@@ -1018,8 +1071,8 @@ t.case("journal: dots:file records writes; check mode does not", function()
 		target = tgt }) -- no src/content/absent: invalid
 	t.truthy(r3.err ~= nil)
 	t.eq(#journal.list(dd, jname), 1, "failures not recorded")
-	-- absent-removal records the removed path (design: removals are
-	-- journaled too — 'paths this package has written')
+	-- absent-removal records the removed path (removals are journalled too:
+	-- 'paths this package has written')
 	local r4 = action_file.file({ dest = dest, absent = true, target = tgt })
 	t.eq(r4.err, nil)
 	t.eq(r4.changed, true)

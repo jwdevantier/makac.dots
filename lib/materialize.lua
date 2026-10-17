@@ -1,7 +1,7 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- Target-agnostic file engine for makac.dots (design/main.md §The primitive
--- action, §Changed detection). Every destination-side operation goes through
+-- Target-agnostic file engine for makac.dots. Every destination-side
+-- operation goes through
 -- the target interface (run/put/get) so the same code serves the host target
 -- and an SSH target alike; only host-side scratch work (temp files, hashing
 -- desired bytes) uses makac.fs / makac.exec.
@@ -117,7 +117,7 @@ function M.symlink(target, dest, link, force)
 end
 
 --- SHA256 (hex) of the file at path on the target: fetched to a host temp and
---- hashed host-side (portable — design §Changed detection).
+--- hashed host-side (portable — no sha256sum is needed on the target).
 function M.remote_sha256(target, path)
 	local tmp = tostring(makac.fs.mktemp_file("dots-"))
 	local ok, err = pcall(target.get, target, path, tmp)
@@ -153,7 +153,7 @@ end
 --- Build the desired bytes of an entry: inline `content` or `src` read
 --- host-side (relative to `root`, the entry's tree root), then the renderer
 --- (content -> content) when present. The post-render bytes are what get
---- hashed (design §Rendering).
+--- hashed and written.
 function M.desired_bytes(with, root)
 	local content
 	if with.content ~= nil then

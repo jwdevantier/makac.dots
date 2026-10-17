@@ -2,9 +2,9 @@
 -- SPDX-License-Identifier: BSD-2-Clause
 --
 -- cases/ssh_real.lua — the package against a REAL ssh target, jwd@workpc.lan
--- (Linux/NixOS, key auth, BatchMode). This is the design's whole point: the
--- same dots:file/dots:link/dots:apply code path serves host and remote; the
--- final case is the differential proof (identical trees on both targets).
+-- (Linux/NixOS, key auth, BatchMode). This is the package's whole point:
+-- the same dots:file/dots:link/dots:apply code path serves host and remote;
+-- the final case is the differential proof (identical trees on both targets).
 --
 -- Only subdirectories under /tmp/makac-dots-test/ named after the case are
 -- touched, and each is removed after its case (pass or fail). The root dir
@@ -87,7 +87,7 @@ for _, p in ipairs(r.out.failed) do print("FAILED " .. p.path) end
 ]]):format(dest, extra or "")
 end
 
--- nested dirs, a $default mode sidecar at the root, and a renderer in a
+-- nested dirs, a $default_attrs mode sidecar at the root, and a renderer in a
 -- subdirectory (renderer definitions dofile'd from the project root —
 -- renders on the HOST, ships the rendered bytes). Sidecars are policies of
 -- their OWN directory: sub/ carries $override = true so drift there repairs
@@ -95,7 +95,7 @@ end
 -- so a pre-existing differing main.conf is a conflict.
 local TREE = {
 	["main.conf"] = "ssh main\n",
-	["dots.lua"] = [[return { ["$default"] = { mode = "0600" } }]],
+	["dots.lua"] = [[return { ["$default_attrs"] = { mode = "0600" } }]],
 	sub = {
 		["inner.conf"] = "ssh inner\n",
 		["rendered.conf"] = "quiet text\n",
@@ -140,7 +140,7 @@ rcase("apply_a_tree", function(ctx, dest)
 	h.eq(rcat(dest .. "/sub/inner.conf"), "ssh inner\n", "nested file landed")
 	h.eq(rcat(dest .. "/sub/rendered.conf"), "QUIET TEXT\n",
 		"renderer ran on the host, rendered bytes landed")
-	h.eq(rmode(dest .. "/main.conf"), "600", "$default mode applied remotely")
+	h.eq(rmode(dest .. "/main.conf"), "600", "$default_attrs mode applied remotely")
 	h.eq(rmode(dest .. "/sub/inner.conf"), "600", "mode in nested dir")
 	-- per-file step lines carry the ssh target name
 	local norm = h.norm(ctx, r.stderr)
@@ -258,7 +258,7 @@ rcase("check_mode", function(ctx, dest)
 end)
 
 rcase("differential_host_vs_ssh", function(ctx, dest)
-	-- THE test the design calls "a strong differential test": apply THE SAME
+	-- the differential test: apply THE SAME
 	-- tree to the host and to the remote; the resulting file trees must be
 	-- byte-identical.
 	local proj = fixture_project(ctx)

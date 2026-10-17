@@ -129,12 +129,12 @@ end
 
 --- Unpack an archive (a string, or the result of parse) into dir,
 --- creating it and any intermediate parents as needed. dir defaults to a
---- fresh makac.fs.mktemp_dir("dots-txtar-"). Returns dir.
+--- fresh makac.fs.mktemp_dir("txtar-"). Returns dir.
 function M.unpack(archive, dir)
 	if type(archive) == "string" then
 		archive = M.parse(archive)
 	end
-	dir = dir and tostring(dir) or tostring(makac.fs.mktemp_dir("dots-txtar-"))
+	dir = dir and tostring(dir) or tostring(makac.fs.mktemp_dir("txtar-"))
 	makac.fs.mkdir_p(dir)
 	local seen = {}
 	for _, f in ipairs(archive.files) do

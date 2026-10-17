@@ -1,7 +1,7 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- lib/journal.lua — the managed journal (design/main.md §Managed journal):
--- the record of paths this package has written, kept under
+-- lib/journal.lua — the managed journal: the record of paths this package
+-- has written, kept under
 --   <data_dir>/dots/<target name>/managed
 -- — the basis for a future prune/unapply.
 --

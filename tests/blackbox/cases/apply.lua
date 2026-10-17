@@ -2,11 +2,11 @@
 -- SPDX-License-Identifier: BSD-2-Clause
 --
 -- cases/apply.lua — dots:apply + the tree walk/sidecar machinery through the
--- CLI: a nested tree with a $default/$ignore sidecar and a renderer entry,
+-- CLI: a nested tree with a $default_attrs/$ignore sidecar and a renderer entry,
 -- idempotence, single-file drift repair, conflict as non-fatal data (and its
 -- strict=true counterpart), check=true reporting without writing, and the
 -- files= escape hatch.
--- Contract: design/main.md §Producing steps / §The tree manifest.
+-- Contract under test: lib/action_apply.lua + lib/plan.lua.
 
 local h = require("harness")
 local bb = require("bbctx")
@@ -21,7 +21,7 @@ return {
 ]]
 
 -- the canonical fixture tree:
---   tree/top.conf        ($default mode 0600 applies; override=false entry)
+--   tree/top.conf        ($default_attrs mode 0600 applies; override=false entry)
 --   tree/notes.bak       ($ignore "*.bak": never shipped)
 --   tree/app/dots.lua    (theme.conf gets the renderer)
 --   tree/app/config.toml ($override=true at tree level: drift converges)
@@ -35,7 +35,7 @@ local FIXTURE = {
 	["notes.bak"] = "MUST NOT BE SHIPPED\n",
 	["dots.lua"] = [=[
 return {
-  ["$default"] = { mode = "0600" },
+  ["$default_attrs"] = { mode = "0600" },
   ["$ignore"] = { "*.bak" },
   ["top.conf"] = { override = false },
 }
@@ -94,7 +94,7 @@ h.case("apply", "tree_with_sidecar_all_files_land", function(ctx)
 	h.matches(norm, "changed: %[host%] <TMP>/home/app/config%.toml %(Ts%)", "per-file line: config.toml")
 	h.matches(norm, "changed: %[host%] <TMP>/home/app/theme%.conf %(Ts%)", "per-file line: theme.conf")
 	h.matches(norm, "changed: %[host%] dots %(Ts%)", "outer dots:apply line is changed")
-	-- $default mode 0600 on every shipped file
+	-- $default_attrs mode 0600 on every shipped file
 	for _, rel in ipairs({ "home/top.conf", "home/app/config.toml", "home/app/theme.conf" }) do
 		local st = makac.exec({ "stat", "-c", "%a", ctx.path(rel) })
 		h.eq((st.stdout:gsub("%s+$", "")), "600", "mode of " .. rel)

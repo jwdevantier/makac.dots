@@ -5,7 +5,7 @@
 -- change detection, idempotence across runs, conflict/override, mode +
 -- drift repair, absent, '~' expansion. Host target; destinations live in the
 -- per-case tmp dir (or under HOME=ctx.tmp), never the real home.
--- Contract: design/main.md §The primitive action: "dots:file".
+-- Contract under test: lib/action_file.lua (dots:file).
 
 local h = require("harness")
 local bb = require("bbctx")

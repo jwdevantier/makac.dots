@@ -4,7 +4,7 @@
 --
 -- workflows/example.lua — the dogfood example: the workflow IS the manifest.
 -- Applies the sample tree (workflows/example-src/, with a sidecar-driven
--- renderer, a $default mode and a $ignore glob) to a scratch destination.
+-- renderer, a $default_attrs mode and a $ignore glob) to a scratch destination.
 -- Safe to run as-is:
 --
 --   makac workflows/example.lua [DEST]
