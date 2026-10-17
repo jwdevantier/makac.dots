@@ -135,7 +135,9 @@ MODE ~/.ssh/config: 777 -> 0600
 
 Machines get the same in `out`: `entries` (full per-entry items with the
 diff text), plus `differing` / `mode_drift` / `ok` / `skipped` / `failed`
-destination lists. `changed` is true iff anything differs. New files diff
+destination lists, and `out.drifted` (bool) says whether anything drifts.
+`changed` is always **false** — reporting changes nothing (same convention
+as makac's built-in `facts` action). New files diff
 from `/dev/null`; `absent` entries diff toward it; symlink drift is a
 one-line note. Nothing is ever written — including per-entry failures,
 which land in `failed` as data, mirroring `dots:apply`.

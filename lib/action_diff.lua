@@ -4,8 +4,7 @@
 -- (root | files, dest, target); walks/plans identically, then reports:
 -- content drift as unified diffs, mode drift as one line per file. The
 -- human report (two sections, contents first) is printed to stdout; the
--- structured items stay machine-readable in `out`. changed = true iff
--- anything differs.
+-- structured items stay machine-readable in `out`.
 
 local plan = require("./plan")
 local diff = require("./diff")
@@ -60,9 +59,12 @@ function M.diff(with)
 		end
 	end
 
+	-- reporting changes nothing: changed is fixed false (convention per the
+	-- built-in facts action); the drift signal lives in out
+	out.drifted = (#out.differing > 0) or (#out.mode_drift > 0)
 	local text = diff.render(report.items)
 	if text ~= "" then io.stdout:write(text .. "\n") end
-	return { changed = (#out.differing > 0) or (#out.mode_drift > 0), out = out }
+	return { changed = false, out = out }
 end
 
 return M
