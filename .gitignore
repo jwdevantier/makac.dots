@@ -1,0 +1,4 @@
+# makac runtime state (fetched packages, targets state, managed journal)
+.makac/
+.makac.lock
+.luarc.json

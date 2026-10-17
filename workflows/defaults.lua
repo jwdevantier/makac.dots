@@ -1,0 +1,22 @@
+-- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
+-- SPDX-License-Identifier: BSD-2-Clause
+-- workflows/defaults.lua — shared attribute sets and renderers for the
+-- example tree (design/main.md §The tree manifest: "a shared renderer is
+-- just a function in a module"). Lives OUTSIDE the tree, next to the
+-- workflow; sidecars pull it in with `dofile(PROJECT_DIR .. "/...")`.
+--
+-- Renderer inputs must be explicit and stable — the rendered output is what
+-- gets hashed, so a nondeterministic input (timestamp, hostname) manifests
+-- as spurious `changed` on every run.
+
+return {
+	-- $default for the example tree: every shipped file is private
+	files = { mode = "0600" },
+
+	-- gitconfig templating without a template language (design §Rendering):
+	-- a renderer is any pure function(content) -> string
+	render_gitconfig = function(content)
+		local user = os.getenv("USER") or "nobody"
+		return (content:gsub("@DOTS_EXAMPLE_USER@", user))
+	end,
+}

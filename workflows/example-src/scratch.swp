@@ -1,0 +1,1 @@
+editor swap file — must never be shipped (covered by $ignore "*.swp")
