@@ -18,6 +18,16 @@
 -- - empty directories ship nothing; source symlinks are dereferenced unless
 --   the entry has `reproduce = true` (then a link entry is synthesized);
 --   a broken symlink in dereference mode is a walk error.
+-- - a dots.lua value may also be a FUNCTION: with a file on disk it is a
+--   shorthand for { renderer = fn }; with NO file on disk it is a virtual
+--   entry — fn(nil, ctx) is called and its return value (a string, or a
+--   table of entry attrs incl. 'content') becomes the file. Function entries
+--   get gaps filled from $default_attrs. A table entry naming a file that
+--   does not exist is an ERROR (typo guard).
+-- - $ctx is a table (or function returning one) computed ONCE per directory
+--   and passed as the second argument to every renderer/entry function —
+--   the channel for shared, reusable template functions that closures
+--   cannot serve.
 
 local glob = require("./glob")
 
@@ -124,6 +134,47 @@ local function is_ignored(ignores, relpath)
 	return false
 end
 
+-- the per-directory context, computed once: $ctx is a table or a function
+-- producing a table; every renderer/entry function in the directory gets it
+-- as a second argument
+local function dir_ctx(dots, dotspath)
+	local c = dots and dots["$ctx"]
+	if c == nil then return nil end
+	if type(c) == "function" then
+		local ok, r = pcall(c)
+		if not ok then
+			error(("plan: $ctx in '%s' raised: %s"):format(dotspath, tostring(r)), 3)
+		end
+		if type(r) ~= "table" then
+			error(("plan: $ctx in '%s' must return a table, got %s"):format(dotspath, type(r)), 3)
+		end
+		return r
+	end
+	if type(c) ~= "table" then
+		error(("plan: '$ctx' in '%s' must be a table or function() -> table"):format(dotspath), 3)
+	end
+	return c
+end
+
+-- call a function-valued entry: fn(content, ctx) -> string | table.
+-- Returns an attrs table (strings become { content = str }).
+local function call_entry_fn(fn, content, ctx, name, dotspath)
+	local ok, r = pcall(fn, content, ctx)
+	if not ok then
+		error(("plan: entry '%s' in '%s' raised: %s"):format(name, dotspath, tostring(r)), 3)
+	end
+	if type(r) == "string" then return { content = r } end
+	if type(r) == "table" then
+		if type(r.content) ~= "string" then
+			error(("plan: entry '%s' in '%s' returned a table without a string 'content'")
+				:format(name, dotspath), 3)
+		end
+		return r
+	end
+	error(("plan: entry '%s' in '%s' must return a string or a table, got %s")
+		:format(name, dotspath, type(r)), 3)
+end
+
 -- walk dir (absolute), producing entries for everything under it.
 -- rel = dir's path relative to the tree root ("" at the top).
 local function walk_dir(dir, rel, ignores, opts, entries)
@@ -160,6 +211,8 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 	-- deterministic output: sort by name before walking
 	table.sort(items, function(a, b) return a.name < b.name end)
 
+	local ctx = dir_ctx(dots, dotspath)
+	local seen = {}
 	for _, item in ipairs(items) do
 		local name = item.name
 		if not AUTO_IGNORE[name] then
@@ -176,25 +229,78 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 				if st.type == "dir" then
 					walk_dir(child_abs, child_rel, ignores, opts, entries)
 				else
-					entries[#entries + 1] = M.synthesize(child_rel, child_abs, name, dots, st, dir, opts)
+					seen[name] = true
+					entries[#entries + 1] =
+						M.synthesize(child_rel, child_abs, name, dots, ctx, st, dir, opts)
 				end
 			end
+		end
+	end
+
+	-- virtual entries: plain dots.lua keys naming NO file on disk. Functions
+	-- become content producers (called with nil); attr tables are a loud
+	-- error (a table policy for a missing file is almost surely a typo).
+	if dots ~= nil then
+		local virtual = {}
+		for k, v in pairs(dots) do
+			if type(k) == "string" and k:sub(1, 1) ~= "$" and not seen[k] then
+				if k:find("/", 1, true) then
+					error(("plan: entry '%s' in '%s': names are plain file names, no '/'")
+						:format(k, dotspath))
+				end
+				if type(v) == "function" then
+					virtual[#virtual + 1] = k
+				elseif type(v) == "table" then
+					error(("plan: entry '%s' in '%s' names a file not in the tree")
+						:format(k, dotspath))
+				end
+			end
+		end
+		-- deterministic order, after the on-disk files
+		table.sort(virtual)
+		for _, k in ipairs(virtual) do
+			local child_rel = rel == "" and k or (rel .. "/" .. k)
+			entries[#entries + 1] = M.synthesize_virtual(child_rel, k, dots[k], ctx, dots, dir, opts)
 		end
 	end
 end
 
 -- build the entry for one walked source node (file, symlink, or other)
-function M.synthesize(relpath, abspath, name, dots, st, dir, opts)
+function M.synthesize(relpath, abspath, name, dots, ctx, st, dir, opts)
 	local dotspath = dir .. "/dots.lua"
 	local explicit = dots and dots[name]
-	if explicit ~= nil and type(explicit) ~= "table" then
-		error(("plan: entry '%s' in '%s' must be a table"):format(name, dotspath))
+	if explicit ~= nil and type(explicit) ~= "table" and type(explicit) ~= "function" then
+		error(("plan: entry '%s' in '%s' must be a table or a function")
+			:format(name, dotspath))
 	end
 
 	local entry = {}
-	merge_attrs(entry, explicit, "entry '" .. name .. "'", dotspath)
-	if dots and dots["$default_attrs"] and explicit == nil then
-		merge_attrs(entry, dots["$default_attrs"], "$default_attrs", dotspath)
+	if type(explicit) == "function" then
+		-- shorthand for { renderer = fn }: called with the file's bytes; gaps
+		-- in the RETURNED attrs are filled from $default_attrs (unlike table
+		-- entries, which are fully explicit)
+		local bytes = st.type == "file" and makac.fs.read_file(abspath) or nil
+		local produced = call_entry_fn(explicit, bytes, ctx, name, dotspath)
+		merge_attrs(entry, produced, "entry '" .. name .. "'", dotspath)
+		if dots and dots["$default_attrs"] then
+			merge_attrs(entry, dots["$default_attrs"], "$default_attrs", dotspath)
+		end
+		explicit = produced -- override policy is read from the produced attrs
+	else
+		merge_attrs(entry, explicit, "entry '" .. name .. "'", dotspath)
+		if dots and dots["$default_attrs"] and explicit == nil then
+			merge_attrs(entry, dots["$default_attrs"], "$default_attrs", dotspath)
+		end
+		-- thread $ctx into table-form renderers by wrapping (desired_bytes
+		-- still calls renderers one-argument)
+		if entry.renderer ~= nil and ctx ~= nil then
+			local r = entry.renderer
+			if type(r) ~= "function" then
+				error(("plan: renderer for '%s' in '%s' must be a function")
+					:format(name, dotspath))
+			end
+			entry.renderer = function(c) return r(c, ctx) end
+		end
 	end
 
 	entry.dest = opts.dest .. "/" .. relpath
@@ -221,10 +327,12 @@ function M.synthesize(relpath, abspath, name, dots, st, dir, opts)
 				error(("plan: '%s' is a broken symlink (dereference mode); "
 					.. "set reproduce = true to ship it as a symlink"):format(abspath))
 			end
-			entry.src = relpath
+			if entry.content == nil then
+				entry.src = relpath
+			end
 		end
 	elseif st.type == "file" then
-		if entry.link == nil then
+		if entry.link == nil and entry.content == nil then
 			entry.src = relpath
 		end
 	else
@@ -232,6 +340,24 @@ function M.synthesize(relpath, abspath, name, dots, st, dir, opts)
 		error(("plan: '%s' is a %s; only files, directories and symlinks can be walked")
 			:format(abspath, st.type))
 	end
+	return entry
+end
+
+-- build the entry for a VIRTUAL node: a dots.lua function naming no file on
+-- disk. fn(nil, ctx) produces the content (string shorthand, or an attrs
+-- table incl. 'content'); attr gaps fill from $default_attrs.
+function M.synthesize_virtual(relpath, name, fn, ctx, dots, dir, opts)
+	local dotspath = dir .. "/dots.lua"
+	local produced = call_entry_fn(fn, nil, ctx, name, dotspath)
+	local entry = {}
+	merge_attrs(entry, produced, "entry '" .. name .. "'", dotspath)
+	if dots and dots["$default_attrs"] then
+		merge_attrs(entry, dots["$default_attrs"], "$default_attrs", dotspath)
+	end
+	entry.dest = opts.dest .. "/" .. relpath
+	entry.override = resolve_override(produced, dots, {
+		name = name, relpath = relpath, abspath = nil, dest = entry.dest,
+	}, opts.call_override, dotspath)
 	return entry
 end
 

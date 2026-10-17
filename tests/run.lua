@@ -833,6 +833,74 @@ r
 	t.eq(e.renderer("abc"), "ABC")
 end)
 
+t.case("tree: function entries — shorthand renderer on a real file", function()
+	local root = txtar.unpack([[-- dots.lua --
+return { ["cfg"] = function(c) return c:upper() end }
+-- cfg --
+hello
+]])
+	local e = plan.tree(root)[1]
+	t.eq(e.dest, "~/cfg")
+	t.eq(e.content, "HELLO\n", "function received the file bytes (txtar trailing newline included)")
+	t.eq(e.src, nil, "computed entries carry content, not src")
+end)
+
+t.case("tree: virtual entries — function with no file on disk", function()
+	local root = txtar.unpack([[-- dots.lua --
+return {
+	["$default_attrs"] = { mode = "0600" },
+	["computed.conf"] = function()
+		return "generated\n"
+	end,
+	["full.conf"] = function()
+		return { content = "full\n", mode = "0444" }
+	end,
+}
+-- real.conf --
+r
+]])
+	local m = by_dest(plan.tree(root))
+	t.eq(m["~/computed.conf"].content, "generated\n")
+	t.eq(m["~/computed.conf"].mode, "0600", "$default_attrs fills the gaps of function entries")
+	t.eq(m["~/full.conf"].content, "full\n")
+	t.eq(m["~/full.conf"].mode, "0444", "returned table attrs win")
+	t.eq(m["~/real.conf"].src, "real.conf", "real files unaffected")
+end)
+
+t.case("tree: attr table naming a missing file is a loud error", function()
+	local root = txtar.unpack([[-- dots.lua --
+return { ["typo.conf"] = { mode = "0600" } }
+-- real.conf --
+r
+]])
+	local ok, err = pcall(plan.tree, root)
+	t.truthy(not ok, "walk must fail")
+	t.contains(tostring(err), "typo.conf")
+	t.contains(tostring(err), "not in the tree")
+end)
+
+t.case("tree: $ctx — table and function forms, and table-form renderers get it too", function()
+	local root = txtar.unpack([[-- dots.lua --
+return {
+	["$ctx"] = function() return { theme = "dark" } end,
+	["a"] = function(c, ctx) return "a:" .. ctx.theme end,
+	["b"] = function(c, ctx) return "b:" .. ctx.theme end,
+}
+]])
+	local m = by_dest(plan.tree(root))
+	t.eq(m["~/a"].content, "a:dark")
+	t.eq(m["~/b"].content, "b:dark")
+	local root2 = txtar.unpack([[-- dots.lua --
+return {
+	["$ctx"] = { who = "ctx" },
+	["f"] = { renderer = function(c, ctx) return c .. "/" .. ctx.who end },
+}
+-- f --
+plain
+]])
+	t.eq(plan.tree(root2)[1].renderer("plain"), "plain/ctx", "ctx threaded into table-form renderers")
+end)
+
 t.case("tree: source symlinks", function()
 	-- txtar cannot express symlinks, so links are created after the unpack
 	local root = txtar.unpack("-- real.txt --\ncontent\n")
@@ -860,7 +928,7 @@ return { ["dangling"] = { reproduce = true } }]])
 	t.eq(m3["~/dangling"].link, "missing-target")
 end)
 
-t.case("tree: load_dotsfile, and dots.lua using PROJECT_DIR", function()
+t.case("tree: load_sidecar, and dots.lua using PROJECT_DIR", function()
 	local root = txtar.unpack([[-- shared.lua --
 return { mode = '0600' }
 -- f.conf --

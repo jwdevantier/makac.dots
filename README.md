@@ -173,7 +173,10 @@ return {
 Notes:
 
 - An explicit entry wins over `$default_attrs`; `$default_attrs` fills gaps for unlisted
-  files and never reaches into subdirectories.
+  files and never reaches into subdirectories. For function entries it fills
+  the *gaps* of the returned attrs instead.
+- A table entry naming a file that does not exist is a loud walk error —
+  almost surely a typo.
 - Override precedence: per-entry `override` > `$override` > the `dots:apply`
   call-site `with.override` > `false`. The walk bakes the resolved boolean
   into each entry.
