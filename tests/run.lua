@@ -1099,6 +1099,92 @@ t.case("apply: requires root or files, and refuses both", function()
 	t.contains(r2.err, "not both")
 end)
 
+-- ---------------------------------------------------------------- dots:diff
+
+local action_diff = require("pkgs/dots/action_diff")
+
+t.case("diff: converged tree reports nothing", function()
+	local root = txtar.unpack("-- a.conf --\naaa\n")
+	local tgt = new_target("diffconv")
+	action_apply.apply({ root = root, target = tgt })
+	local r = action_diff.diff({ root = root, target = tgt })
+	t.eq(r.err, nil)
+	t.eq(r.changed, false, "no drift -> not changed")
+	t.eq(#r.out.differing, 0)
+	t.eq(#r.out.mode_drift, 0)
+	t.eq(#r.out.ok, 1)
+end)
+
+t.case("diff: content drift, new files, and mode drift", function()
+	local root = txtar.unpack([[-- dots.lua --
+return { ["m.conf"] = { skip = true } }
+-- old.conf --
+desired content
+-- new.conf --
+fresh
+-- m.conf --
+mode-only
+]])
+	local tgt = new_target("diffdrift")
+	-- skip entry must not even be inspected
+	txtar.unpack("-- old.conf --\ndrifted content\n-- m.conf --\nmode-only\n", tgt.root)
+	makac.exec({ "chmod", "0600", "--", tgt.root .. "/m.conf" })
+	local r = action_diff.diff({ root = root, target = tgt })
+	t.eq(r.err, nil)
+	t.eq(r.changed, true)
+	t.eq(#r.out.differing, 2)
+	t.eq(#r.out.mode_drift, 0)
+	t.eq(#r.out.skipped, 1)
+	local items = {}
+	for _, it in ipairs(r.out.entries) do items[it.dest] = it end
+	t.contains(items["~/old.conf"].content, "-drifted content")
+	t.contains(items["~/old.conf"].content, "+desired content")
+	t.contains(items["~/old.conf"].content, "--- a/~/old.conf", "patch-readable labels")
+	t.contains(items["~/new.conf"].content, "+fresh", "new files: content shown as additions")
+end)
+
+t.case("diff: mode drift on byte-identical file; symlink and absent notes", function()
+	local root = txtar.unpack([[-- dots.lua --
+return {
+	["keep.conf"] = { mode = "0600" },
+	["gone.conf"] = { absent = true },
+	["lnk"] = { link = "../real" },
+}
+-- keep.conf --
+same bytes
+]])
+	local tgt = new_target("diffmode")
+	txtar.unpack("-- keep.conf --\nsame bytes\n-- gone.conf --\nstale\n", tgt.root)
+	makac.exec({ "chmod", "0644", "--", tgt.root .. "/keep.conf" }) -- drift the mode
+	makac.fs.symlink("../elsewhere", tgt.root .. "/lnk")
+	local r = action_diff.diff({ root = root, target = tgt })
+	t.eq(r.err, nil)
+	local items = {}
+	for _, it in ipairs(r.out.entries) do items[it.dest] = it end
+	t.eq(items["~/keep.conf"].content, nil, "bytes identical: no content drift")
+	t.eq(items["~/keep.conf"].mode.have, "644")
+	t.eq(items["~/keep.conf"].mode.want, "0600")
+	t.contains(items["~/lnk"].content, "symlink target")
+	t.contains(items["~/gone.conf"].content, "--- a/~/gone.conf", "absent entry: file -> /dev/null")
+	t.eq(r.changed, true)
+end)
+
+t.case("diff: refuses root+files, renders the two-section report", function()
+	local r = action_diff.diff({ root = "t", files = {} })
+	t.truthy(r.err ~= nil)
+	t.contains(r.err, "not both")
+	local libdiff = require("pkgs/dots/diff")
+	local text = libdiff.render({
+		{ dest = "~/a", content = "unified diff here" },
+		{ dest = "~/b", mode = { have = "644", want = "0600" } },
+		{ dest = "~/ok" },
+	})
+	t.contains(text, "## contents\nunified diff here")
+	t.contains(text, "## modes\nMODE ~/b: 644 -> 0600")
+	t.truthy(text:find("## contents") < text:find("## modes"), "contents section first")
+	t.eq(libdiff.render({ { dest = "~/ok" } }), "", "converged renders empty")
+end)
+
 -- ---------------------------------------------------------------- journal
 
 local journal = require("pkgs/dots/journal")

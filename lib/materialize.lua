@@ -116,19 +116,27 @@ function M.symlink(target, dest, link, force)
 	return true
 end
 
---- SHA256 (hex) of the file at path on the target: fetched to a host temp and
---- hashed host-side (portable — no sha256sum is needed on the target).
-function M.remote_sha256(target, path)
+--- Fetch a target file's bytes to the host: (bytes) or (nil, err).
+--- (Portable: goes through target:get, no target-side hasher needed.)
+function M.fetch_bytes(target, path)
 	local tmp = tostring(makac.fs.mktemp_file("dots-"))
 	local ok, err = pcall(target.get, target, path, tmp)
 	if not ok then
 		pcall(makac.exec, { "rm", "-f", tmp })
 		return nil, "could not fetch '" .. path .. "': " .. tostring(err)
 	end
-	local sha, serr = makac.fs.sha256(tmp)
+	local data, rerr = makac.fs.read_file(tmp)
 	pcall(makac.exec, { "rm", "-f", tmp })
-	if not sha then return nil, tostring(serr) end
-	return sha
+	if data == nil then return nil, "could not read fetched '" .. path .. "'" end
+	return data
+end
+
+--- SHA256 (hex) of the file at path on the target: fetched and hashed
+--- host-side (portable — no sha256sum is needed on the target).
+function M.remote_sha256(target, path)
+	local data, err = M.fetch_bytes(target, path)
+	if not data then return nil, err end
+	return makac.sha256(data)
 end
 
 local function statf(target, path, fmt)

@@ -115,6 +115,31 @@ as failures (a conflict means the state cannot converge). Entries created
 by the walk get their `src` resolved against `root` by the inner steps;
 absolute or `~`-prefixed `src` values are used as-is.
 
+### `dots:diff` — drift reporting (never writes)
+
+Same inputs as `dots:apply` (`root` **or** `files`, `dest`, `target`), same
+walk and planning, but instead of converging it *reports* what differs.
+Humans get a two-section report on stdout — unified diffs for content drift
+(patch(1)-readable via the `a/<dest>` / `b/<dest>` labels), then one line
+per file with mode drift:
+
+```
+## contents
+--- a/~/docs/gopass.md
++++ b/~/docs/gopass.md
+@@ -5,8 +5,6 @@
+ ...
+## modes
+MODE ~/.ssh/config: 777 -> 0600
+```
+
+Machines get the same in `out`: `entries` (full per-entry items with the
+diff text), plus `differing` / `mode_drift` / `ok` / `skipped` / `failed`
+destination lists. `changed` is true iff anything differs. New files diff
+from `/dev/null`; `absent` entries diff toward it; symlink drift is a
+one-line note. Nothing is ever written — including per-entry failures,
+which land in `failed` as data, mirroring `dots:apply`.
+
 ## Managed journal
 
 Every path successfully written/removed/chmod'd is recorded under

@@ -11,6 +11,7 @@
 
 local action_file = require("./action_file")
 local action_apply = require("./action_apply")
+local action_diff = require("./action_diff")
 
 return {
 	actions = {
@@ -19,5 +20,7 @@ return {
 		link = action_file.link,
 		-- walk a tree (or take with.files) and converge every entry
 		apply = action_apply.apply,
+		-- walk a tree and REPORT drift (unified diffs + mode lines); never writes
+		diff = action_diff.diff,
 	},
 }

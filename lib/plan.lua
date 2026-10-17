@@ -237,9 +237,12 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 		end
 	end
 
-	-- virtual entries: plain dots.lua keys naming NO file on disk. Functions
-	-- become content producers (called with nil); attr tables are a loud
-	-- error (a table policy for a missing file is almost surely a typo).
+	-- virtual entries: plain dots.lua keys naming NO file on disk.
+	-- - functions: content producers (called with nil)
+	-- - tables carrying content/absent/skip/link: valid entries without a
+	--   source node
+	-- - tables of pure attributes: a loud error — a policy for a missing
+	--   file is almost surely a typo
 	if dots ~= nil then
 		local virtual = {}
 		for k, v in pairs(dots) do
@@ -251,8 +254,11 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 				if type(v) == "function" then
 					virtual[#virtual + 1] = k
 				elseif type(v) == "table" then
-					error(("plan: entry '%s' in '%s' names a file not in the tree")
-						:format(k, dotspath))
+					if v.content == nil and v.absent == nil and v.skip == nil and v.link == nil then
+						error(("plan: entry '%s' in '%s' names a file not in the tree")
+							:format(k, dotspath))
+					end
+					virtual[#virtual + 1] = k
 				end
 			end
 		end
@@ -343,12 +349,17 @@ function M.synthesize(relpath, abspath, name, dots, ctx, st, dir, opts)
 	return entry
 end
 
--- build the entry for a VIRTUAL node: a dots.lua function naming no file on
--- disk. fn(nil, ctx) produces the content (string shorthand, or an attrs
--- table incl. 'content'); attr gaps fill from $default_attrs.
-function M.synthesize_virtual(relpath, name, fn, ctx, dots, dir, opts)
+-- build the entry for a VIRTUAL node: a dots.lua entry naming no file on
+-- disk. Function values produce the content (fn(nil, ctx): string shorthand,
+-- or an attrs table incl. 'content'); table values are entries as-is
+-- (content/absent/skip/link — a pure-attrs table never reaches here, the
+-- walker errors first). Attr gaps fill from $default_attrs.
+function M.synthesize_virtual(relpath, name, val, ctx, dots, dir, opts)
 	local dotspath = dir .. "/dots.lua"
-	local produced = call_entry_fn(fn, nil, ctx, name, dotspath)
+	local produced = val
+	if type(val) == "function" then
+		produced = call_entry_fn(val, nil, ctx, name, dotspath)
+	end
 	local entry = {}
 	merge_attrs(entry, produced, "entry '" .. name .. "'", dotspath)
 	if dots and dots["$default_attrs"] then
