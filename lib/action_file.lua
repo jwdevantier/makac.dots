@@ -62,7 +62,7 @@ function M.file(with)
 
 	local target, terr = resolve_target(with)
 	if not target then return fail(terr) end
-	local path, perr = materialize.expand(target, with.dest)
+	local path, perr = materialize.resolve(target, with.dest)
 	if not path then return fail(tostring(perr)) end
 	local check = with.check == true
 
@@ -191,7 +191,7 @@ function M.link(with)
 
 	local target, terr = resolve_target(with)
 	if not target then return lfail(terr) end
-	local path, perr = materialize.expand(target, with.dest)
+	local path, perr = materialize.resolve(target, with.dest)
 	if not path then return lfail(tostring(perr)) end
 	local check = with.check == true
 

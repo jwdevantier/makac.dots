@@ -29,9 +29,19 @@ function M.target_home(target)
 	return h
 end
 
---- Expand a leading "~" / "~/" against the target's $HOME. Other paths are
---- returned unchanged ("~user/..." is deliberately NOT supported).
-function M.expand(target, path)
+--- Resolve a user dest against the target. "~"/"~/" expand against the
+--- target session's $HOME; absolute paths pass through. Everything else is
+--- REJECTED: relative dests would mean the ambient cwd of whatever ran the
+--- command (host: the makac process's cwd; ssh: the remote login dir), which
+--- is the opposite of a declared end-state. "~user" is unsupported; ".."
+--- segments are rejected (a config manager never needs them).
+--- Returns (path) or (nil, err).
+function M.resolve(target, path)
+	for seg in (path .. "/"):gmatch("(.-)/") do
+		if seg == ".." then
+			return nil, ("dest %q contains a '..' segment"):format(path)
+		end
+	end
 	if path == "~" then
 		return M.target_home(target)
 	end
@@ -39,6 +49,14 @@ function M.expand(target, path)
 		local home, err = M.target_home(target)
 		if not home then return nil, err end
 		return home .. "/" .. path:sub(3)
+	end
+	if path:sub(1, 1) == "~" then
+		return nil, ("dest %q: '~user' form is not supported; use '~/' or an absolute path")
+			:format(path)
+	end
+	if path:sub(1, 1) ~= "/" then
+		return nil, ("dest %q is relative; use '~/...' or an absolute path")
+			:format(path)
 	end
 	return path
 end
@@ -65,7 +83,10 @@ function M.remote_kind(target, path)
 	if res.code ~= 0 then
 		return nil, "inspecting '" .. path .. "' failed: " .. (res.stderr or "")
 	end
-	return (res.stdout or ""):gsub("%s+$", "")
+	-- NOTE: the outer parens truncate gsub's second return (the
+	-- substitution count) so callers see (value) or (nil, err), never
+	-- (value, 1) on success.
+	return ((res.stdout or ""):gsub("%s+$", ""))
 end
 
 --- Current target of the symlink at path (nothing more; no -f resolution).
@@ -75,7 +96,7 @@ function M.readlink(target, path)
 	if res.code ~= 0 then
 		return nil, "readlink '" .. path .. "' failed: " .. (res.stderr or "")
 	end
-	return (res.stdout or ""):gsub("%s+$", "")
+	return ((res.stdout or ""):gsub("%s+$", ""))
 end
 
 --- Create a symlink at dest pointing at link (link stored as given, relative
@@ -116,7 +137,7 @@ local function statf(target, path, fmt)
 	if res.code ~= 0 then
 		return nil, "stat '" .. path .. "' failed: " .. (res.stderr or "")
 	end
-	return (res.stdout or ""):gsub("%s+$", "")
+	return ((res.stdout or ""):gsub("%s+$", ""))
 end
 
 --- Octal permission digits of the remote path ("644"), via GNU/BusyBox stat.

@@ -7,7 +7,9 @@
 
 local t = dofile(SCRIPT_DIR .. "/lib/t.lua")
 local fake = dofile(SCRIPT_DIR .. "/lib/fake_target.lua")
+local txtar = dofile(SCRIPT_DIR .. "/lib/txtar.lua")
 local action_file = require("pkgs/dots/action_file")
+local action_apply = require("pkgs/dots/action_apply")
 local materialize = require("pkgs/dots/materialize")
 
 -- the managed journal writes to makac.data_dir on every successful mutation;
@@ -27,6 +29,82 @@ local function mode_of(path)
 	local res = makac.exec({ "stat", "-c", "%a", "--", path })
 	return (res.stdout or ""):gsub("%s+$", "")
 end
+
+-- ------------------------------------------------------------------ txtar
+
+t.case("txtar: comment, file order, trailing newlines", function()
+	local a = txtar.parse([[this describes the tree
+over two lines
+-- a.txt --
+hello
+-- sub/b.txt --
+world
+]])
+	t.eq(a.comment, "this describes the tree\nover two lines\n")
+	t.eq(#a.files, 2)
+	t.eq(a.files[1].name, "a.txt")
+	t.eq(a.files[1].data, "hello\n", "newline before next marker is part of the data")
+	t.eq(a.files[2].name, "sub/b.txt")
+	t.eq(a.files[2].data, "world\n")
+end)
+
+t.case("txtar: no trailing newline at EOF stays that way", function()
+	local a = txtar.parse("-- a --\nno-eol")
+	t.eq(a.files[1].data, "no-eol")
+	-- an empty file: marker line immediately at EOF
+	local b = txtar.parse("-- empty --\n")
+	t.eq(b.files[1].data, "")
+end)
+
+t.case("txtar: indented literals are dedented, deeper indent kept", function()
+	local a = txtar.parse([[-- dots.lua --
+	return {
+		["$ignore"] = { "*.tmp" },
+	}
+]])
+	-- the Lua literal above is flush-left here, so parse it again indented
+	local indented = a.files[1].data:gsub("\n", "\n\t\t")
+	local b = txtar.parse("\t\t-- dots.lua --\n\t\t" .. indented)
+	t.eq(b.files[1].data, a.files[1].data, "base indent stripped, relative indent preserved")
+end)
+
+t.case("txtar: no markers means everything is comment", function()
+	local a = txtar.parse("just a note\nnothing else\n")
+	t.eq(#a.files, 0)
+	t.eq(a.comment, "just a note\nnothing else\n")
+end)
+
+t.case("txtar: unpack writes the tree into a temp dir", function()
+	local dir = txtar.unpack([[tree used by a fake target
+-- dots.lua --
+return {}
+-- ssh/config --
+Host *
+-- sub/real.conf --
+real = true
+]])
+	t.eq(read(dir .. "/dots.lua"), "return {}\n")
+	t.eq(read(dir .. "/ssh/config"), "Host *\n")
+	t.eq(read(dir .. "/sub/real.conf"), "real = true\n", "parents are created")
+end)
+
+t.case("txtar: unpack into a caller-provided dir", function()
+	local dir = tostring(makac.fs.mktemp_dir("dots-txtar-into-"))
+	local got = txtar.unpack("-- a --\nx\n", dir)
+	t.eq(got, dir)
+	t.eq(read(dir .. "/a"), "x\n")
+end)
+
+t.case("txtar: unpack rejects unsafe and duplicate names", function()
+	for _, bad in ipairs({ "../x", "a/../../x", "/abs", "a//b", "trailing/", " padded" }) do
+		local ok, err = pcall(txtar.unpack, "-- " .. bad .. " --\nx\n")
+		t.truthy(not ok, "rejects " .. bad)
+		t.contains(tostring(err), "txtar.unpack")
+	end
+	local ok, err = pcall(txtar.unpack, "-- a --\n1\n-- a --\n2\n")
+	t.truthy(not ok, "rejects duplicates")
+	t.contains(tostring(err), "duplicate")
+end)
 
 -- ---------------------------------------------------------------- dots:file
 
@@ -286,16 +364,198 @@ t.case("link: skip never manages", function()
 	t.eq(makac.fs.stat(tgt.root .. "/s"), nil, "nothing was written")
 end)
 
+-- ------------------------------------------- directory creation (mkdir -p)
+--
+-- Both write paths run mkdir_parents before touching dest (design §The
+-- primitive action step 8; link §'dest absent'). These cases pin the
+-- directory-creation behavior itself: depth, partial state, blockers,
+-- symlinked intermediates, and that non-writing paths create nothing.
+
+-- host-side kind of a node inside a fake target (fs.stat speaks the same
+-- vocabulary as remote_kind; nil becomes "absent")
+local function node_type(path)
+	local st = makac.fs.stat(path)
+	return st and st.type or "absent"
+end
+
+t.case("dirs: deep fresh nesting materializes every level", function()
+	local tgt = new_target("deepfresh")
+	local with = {
+		dest = "~/.config/app/plugins/theme/theme.toml",
+		content = "[theme]\n",
+		target = tgt,
+	}
+	local res = action_file.file(with)
+	t.eq(res.err, nil)
+	t.eq(res.changed, true)
+	t.eq(read(tgt.root .. "/.config/app/plugins/theme/theme.toml"), "[theme]\n")
+	for _, d in ipairs({
+		"/.config", "/.config/app", "/.config/app/plugins", "/.config/app/plugins/theme",
+	}) do
+		t.eq(node_type(tgt.root .. d), "dir", "intermediate is a directory: " .. d)
+	end
+	-- mkdir -p over the now-existing dirs is a no-op
+	local res2 = action_file.file(with)
+	t.eq(res2.err, nil)
+	t.eq(res2.changed, false, "second run is a no-op")
+end)
+
+t.case("dirs: partially existing intermediates are kept and extended", function()
+	local tgt = new_target("deeppartial")
+	makac.fs.mkdir_p(tgt.root .. "/.config/app")
+	makac.fs.write_file(tgt.root .. "/.config/other.conf", "keep me\n")
+	local res = action_file.file({
+		dest = "~/.config/app/plugins/p.conf",
+		content = "p\n",
+		target = tgt,
+	})
+	t.eq(res.err, nil)
+	t.eq(read(tgt.root .. "/.config/app/plugins/p.conf"), "p\n")
+	t.eq(read(tgt.root .. "/.config/other.conf"), "keep me\n", "existing content preserved")
+end)
+
+t.case("dirs: a file blocking an intermediate component is a clean error", function()
+	local tgt = new_target("deepblocked")
+	-- ~/.config exists as a regular FILE; txtar seeds the target state
+	txtar.unpack("-- .config --\nnot a directory\n", tgt.root)
+	local res = action_file.file({
+		dest = "~/.config/foo/config",
+		content = "managed\n",
+		target = tgt,
+	})
+	t.truthy(res.err, "err is set")
+	t.contains(res.err, "mkdir")
+	t.eq(res.changed, nil, "a failed step reports no change")
+	t.eq(read(tgt.root .. "/.config"), "not a directory\n", "the blocker is untouched")
+	t.eq(#makac.fs.listdir(tgt.root), 1, "mkdir failed before write_file: no dirs, no temp detritus")
+end)
+
+t.case("dirs: a symlinked intermediate directory is followed", function()
+	local tgt = new_target("symlinkparent")
+	-- the classic stow-style setup: ~/.config is a symlink elsewhere
+	makac.fs.mkdir_p(tgt.root .. "/real-config")
+	makac.fs.symlink("real-config", tgt.root .. "/.config")
+	local with = {
+		dest = "~/.config/foo/config",
+		content = "through the link\n",
+		target = tgt,
+	}
+	local res = action_file.file(with)
+	t.eq(res.err, nil)
+	t.eq(res.changed, true)
+	t.eq(read(tgt.root .. "/real-config/foo/config"), "through the link\n", "bytes landed through the link")
+	t.eq(node_type(tgt.root .. "/.config"), "link", "the symlink itself is untouched")
+	local res2 = action_file.file(with)
+	t.eq(res2.err, nil)
+	t.eq(res2.changed, false, "the no-op path works through the link too")
+end)
+
+t.case("dirs: dots:link creates deep parents too", function()
+	local tgt = new_target("deeplink")
+	local res = action_file.link({
+		dest = "~/.local/share/app/current/link",
+		link = "../v1",
+		target = tgt,
+	})
+	t.eq(res.err, nil)
+	t.eq(res.changed, true)
+	t.eq(node_type(tgt.root .. "/.local/share/app/current/link"), "link")
+	local cur, lerr = materialize.readlink(tgt, tgt.root .. "/.local/share/app/current/link")
+	t.eq(lerr, nil)
+	t.eq(cur, "../v1", "relative target stored verbatim")
+end)
+
+t.case("dirs: check=true creates neither directories nor the file", function()
+	local tgt = new_target("deepcheck")
+	local res = action_file.file({
+		dest = "~/a/b/c/file",
+		content = "x\n",
+		check = true,
+		target = tgt,
+	})
+	t.eq(res.err, nil)
+	t.eq(res.changed, true, "reports it would change")
+	t.eq(#makac.fs.listdir(tgt.root), 0, "nothing was created on the target")
+end)
+
+t.case("dirs: absent and skip never create directories", function()
+	local tgt = new_target("deepabsent")
+	local res = action_file.file({ dest = "~/a/b/file", absent = true, target = tgt })
+	t.eq(res.err, nil)
+	t.eq(res.changed, false, "a missing entry is already in the desired state")
+	local res2 = action_file.file({ dest = "~/c/d/file", skip = true, target = tgt })
+	t.eq(res2.skipped, true)
+	local res3 = action_file.link({ dest = "~/e/f/link", absent = true, target = tgt })
+	t.eq(res3.err, nil)
+	t.eq(res3.changed, false)
+	t.eq(#makac.fs.listdir(tgt.root), 0, "target untouched throughout")
+end)
+
+t.case("dirs: apply over a tree with a shared missing prefix", function()
+	local root = txtar.unpack([[tree with one shared prefix, two branches
+-- wm/i3/config --
+set $mod Mod4
+-- wm/i3/status.toml --
+[status]
+-- wm/polybar/config.ini --
+[bar/top]
+-- editor/init.lua --
+vim = true
+]])
+	local tgt = new_target("applydirs")
+	local r = action_apply.apply({ root = root, target = tgt })
+	t.eq(r.err, nil)
+	t.eq(r.changed, true)
+	t.eq(#r.out.changed, 4)
+	t.eq(#r.out.failed, 0)
+	t.eq(read(tgt.root .. "/wm/i3/config"), "set $mod Mod4\n")
+	t.eq(read(tgt.root .. "/wm/polybar/config.ini"), "[bar/top]\n")
+	t.eq(read(tgt.root .. "/editor/init.lua"), "vim = true\n")
+	t.eq(node_type(tgt.root .. "/wm"), "dir")
+	t.eq(node_type(tgt.root .. "/wm/i3"), "dir")
+	t.eq(node_type(tgt.root .. "/wm/polybar"), "dir")
+	t.eq(#makac.fs.listdir(tgt.root), 2, "exactly the tree's two top-level dirs, nothing stray")
+	local r2 = action_apply.apply({ root = root, target = tgt })
+	t.eq(r2.err, nil)
+	t.eq(r2.changed, false)
+	t.eq(#r2.out.ok, 4)
+end)
+
 -- ------------------------------------------------------------- materialize
 
-t.case("expand: ~ and ~/ against the target's HOME", function()
-	local tgt = new_target("expand")
+t.case("resolve: ~, ~/ and absolute accepted", function()
+	local tgt = new_target("resolve")
 	local home = materialize.target_home(tgt)
 	t.eq(home, tgt.root)
-	t.eq(materialize.expand(tgt, "~"), tgt.root)
-	t.eq(materialize.expand(tgt, "~/a/b"), tgt.root .. "/a/b")
-	t.eq(materialize.expand(tgt, "/abs/path"), "/abs/path", "absolute paths pass through")
-	t.eq(materialize.expand(tgt, "rel/path"), "rel/path", "relative paths pass through")
+	t.eq(materialize.resolve(tgt, "~"), tgt.root)
+	t.eq(materialize.resolve(tgt, "~/a/b"), tgt.root .. "/a/b")
+	t.eq(materialize.resolve(tgt, "/abs/path"), "/abs/path", "absolute paths pass through")
+end)
+
+t.case("resolve: relative, ~user and '..' are rejected", function()
+	local tgt = new_target("resolvebad")
+	local v, err = materialize.resolve(tgt, "rel/path")
+	t.eq(v, nil)
+	t.contains(err, "relative")
+	local v2, err2 = materialize.resolve(tgt, "~root/x")
+	t.eq(v2, nil)
+	t.contains(err2, "not supported")
+	for _, bad in ipairs({ "~/../x", "/a/../b", "a/../b" }) do
+		local v3, err3 = materialize.resolve(tgt, bad)
+		t.eq(v3, nil, "rejects " .. bad)
+		t.contains(err3, "'..'")
+	end
+end)
+
+t.case("resolve: both verbs refuse a relative dest before touching the target", function()
+	local tgt = new_target("resolveverb")
+	local rf = action_file.file({ dest = "rel/f", content = "x", target = tgt })
+	t.truthy(rf.err, "dots:file errs")
+	t.contains(rf.err, "relative")
+	local rl = action_file.link({ dest = "rel/l", link = "/x", target = tgt })
+	t.truthy(rl.err, "dots:link errs")
+	t.contains(rl.err, "relative")
+	t.eq(#makac.fs.listdir(tgt.root), 0, "nothing was created")
 end)
 
 t.case("desired_bytes: content, src, renderer, errors", function()
@@ -576,8 +836,6 @@ return { ["$default"] = d }]])
 end)
 
 -- ---------------------------------------------------------------- dots:apply
-
-local action_apply = require("pkgs/dots/action_apply")
 
 local function read_in(tgt, rel)
 	return makac.fs.read_file(tgt.root .. "/" .. rel)
