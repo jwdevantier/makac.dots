@@ -35,8 +35,12 @@ function M.apply(with)
 	local strict = with.strict == true
 
 	-- root is the normal input; files (a pre-built entry list) is the escape
-	-- hatch. root wins when both are given.
+	-- hatch. Both given is an error (silently picking one would hide a
+	-- caller bug), as is neither.
 	local entries
+	if with.root ~= nil and with.files ~= nil then
+		return fail("give 'root' or 'files', not both")
+	end
 	if with.root ~= nil then
 		if type(with.root) ~= "string" or with.root == "" then
 			return fail("'root' must be a non-empty string")

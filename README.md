@@ -88,8 +88,8 @@ print("changed: " .. #r.out.changed, "failed: " .. #r.out.failed)
 ```
 
 Inputs: `root` (a source tree to walk) **or** `files` (a pre-built list of
-entry tables, the escape hatch); `root` wins when both are given, and
-neither is an error.
+entry tables, the escape hatch). Giving both is an error, as is giving
+neither.
 
 Every entry becomes its own inner step (one `ok`/`changed`/`skipped`/
 `failed` line per file), and per-file failures are **data, never an

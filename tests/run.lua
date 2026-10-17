@@ -1010,10 +1010,13 @@ p
 	t.eq(read_in(tgt, "plain.conf"), "p\n")
 end)
 
-t.case("apply: requires root or files", function()
+t.case("apply: requires root or files, and refuses both", function()
 	local r = action_apply.apply({})
 	t.truthy(r.err ~= nil)
 	t.contains(r.err, "root")
+	local r2 = action_apply.apply({ root = "t", files = {} })
+	t.truthy(r2.err ~= nil, "both given is an error, not a silent pick")
+	t.contains(r2.err, "not both")
 end)
 
 -- ---------------------------------------------------------------- journal
