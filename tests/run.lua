@@ -774,7 +774,7 @@ t.case("tree: override precedence entry > $override > call-site > false", functi
 	local root = txtar.unpack([[predicate selects *.local; explicit entries win over it
 -- dots.lua --
 return {
-	["$override"] = function(name) return name:match("%.local$") ~= nil end,
+	["$override"] = function(file) return file.name:match("%.local$") ~= nil end,
 	["foo.conf"] = { override = true },
 	["bar.local"] = { override = false },
 }
@@ -808,6 +808,18 @@ return { ['$override'] = true }
 y
 ]])
 	t.eq(plan.tree(root3)[1].override, true, "plain boolean $override")
+	-- the callback receives the whole file context, dest included (as written);
+	-- the predicate lives in the file's own directory (dots.lua is dir-local)
+	local root4 = txtar.unpack([[-- shallow.conf --
+shallow
+-- deep/dots.lua --
+return { ['$override'] = function(file) return file.dest == '~/deep/f.conf' end }
+-- deep/f.conf --
+deep
+]])
+	local m4 = by_dest(plan.tree(root4))
+	t.eq(m4["~/deep/f.conf"].override, true, "predicate consulted file.dest")
+	t.eq(m4["~/shallow.conf"].override, false)
 end)
 
 t.case("tree: renderer captured from a dots.lua entry", function()

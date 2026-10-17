@@ -66,9 +66,11 @@ local function merge_attrs(dst, src, what, path)
 	end
 end
 
--- resolve the override policy for one file name, given the dots.lua table
--- and the call-site default. Returns a boolean.
-local function resolve_override(entry_attrs, dots, name, call_default, dotspath)
+-- resolve the override policy for one walked file, given the dots.lua table
+-- and the call-site default. file = { name, relpath, abspath, dest } (dest
+-- as written, not expanded: the walk never contacts the target). Returns a
+-- boolean.
+local function resolve_override(entry_attrs, dots, file, call_default, dotspath)
 	if entry_attrs and entry_attrs.override ~= nil then
 		return entry_attrs.override == true
 	end
@@ -78,13 +80,13 @@ local function resolve_override(entry_attrs, dots, name, call_default, dotspath)
 			return pol
 		end
 		if type(pol) == "function" then
-			local ok, r = pcall(pol, name)
+			local ok, r = pcall(pol, file)
 			if not ok then
-				error(("plan: $override in '%s' raised for '%s': %s"):format(dotspath, name, tostring(r)), 3)
+				error(("plan: $override in '%s' raised for '%s': %s"):format(dotspath, file.relpath, tostring(r)), 3)
 			end
 			return r == true
 		end
-		error(("plan: '$override' in '%s' must be a boolean or function(name) -> bool, got %s")
+		error(("plan: '$override' in '%s' must be a boolean or function(file) -> bool, got %s")
 			:format(dotspath, type(pol)), 3)
 	end
 	return call_default == true
@@ -196,7 +198,9 @@ function M.synthesize(relpath, abspath, name, dots, st, dir, opts)
 	end
 
 	entry.dest = opts.dest .. "/" .. relpath
-	entry.override = resolve_override(explicit, dots, name, opts.call_override, dotspath)
+	entry.override = resolve_override(explicit, dots, {
+		name = name, relpath = relpath, abspath = abspath, dest = entry.dest,
+	}, opts.call_override, dotspath)
 
 	if st.type == "link" then
 		if entry.link ~= nil then

@@ -159,10 +159,14 @@ return {
 
   -- which files here may replace a differing existing file at the
   -- destination (a "conflict" otherwise). A boolean applies to all files
-  -- here. A function is called once per file (by name); true = this file
-  -- may overwrite, false = it may not. The example below says: only
-  -- "*.local" files here may overwrite what is already installed:
-  ["$override"] = function(name) return name:match("%.local$") ~= nil end,
+  -- here. A function is called once per file with a table:
+  --   file.name     basename ("init.lua")
+  --   file.relpath  path within the tree ("nvim/init.lua")
+  --   file.dest     destination as written ("~/nvim/init.lua")
+  --   file.abspath  absolute host-side source path
+  -- true = this file may overwrite, false = it may not. The example below
+  -- says: only "*.local" files here may overwrite what is already installed:
+  ["$override"] = function(file) return file.name:match("%.local$") ~= nil end,
 }
 ```
 
