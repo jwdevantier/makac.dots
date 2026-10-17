@@ -4,7 +4,7 @@
 
 A [makac](https://github.com/jwdevantier/makac) package that turns makac into
 a dotfiles manager — a chezmoi replacement: walk a tree of source files (with
-`dots.lua` sidecars for ignore/override/materialize rules) and converge the
+`dots.lua` policy files for ignore/override/materialize rules) and converge the
 result onto a target, host or SSH remote alike.
 
 **Status: functional** — `dots:file`, `dots:link` and `dots:apply` are
@@ -72,7 +72,7 @@ symlink.
 ### `dots:apply` — the primary action
 
 The normal way to use the package: point it at a source tree (see
-[Trees and sidecars](#trees-and-dotslua-sidecars)) and it converges every
+[Trees and dots.lua](#trees-and-dotslua)) and it converges every
 file in it:
 
 ```lua
@@ -122,7 +122,7 @@ Every path successfully written/removed/chmod'd is recorded under
 journal writes are skipped in check mode and never fail a step). This is the
 basis for a future `dots:prune`.
 
-## Trees and `dots.lua` sidecars
+## Trees and `dots.lua`
 
 `dots:apply` walks a source tree (`lib/plan.lua`, also usable directly via
 `require("pkgs/dots/plan")`; `tree.md`'s rules are implemented and tested
@@ -130,7 +130,7 @@ there). The walk is depth-first with names sorted, so the entry list is
 deterministic:
 
 - Each file yields an entry: `dest = <dest> .. "/" .. <relpath>` (call-site
-  `dest` defaults to `~`), `src = <relpath>`, plus sidecar attributes.
+  `dest` defaults to `~`), `src = <relpath>`, plus attributes from dots.lua.
 - **Empty directories ship nothing** — a dir exists at the destination only
   as the parent of a managed file. Parent dirs are `mkdir -p`'d on write.
 - `.git`, `.makac` and `dots.lua` are auto-ignored, everywhere.
@@ -140,7 +140,7 @@ deterministic:
   target string. To create a symlink at the destination deliberately, write
   an explicit `{ link = "<target>" }` entry.
 
-A directory may carry one `dots.lua` sidecar, which returns a table and is
+A directory may carry one `dots.lua`, which returns a table and is
 the complete, self-contained policy **for that directory only** — no
 inheritance, no merging across directories:
 
@@ -171,10 +171,10 @@ Notes:
 - Override precedence: per-entry `override` > `$override` > the `dots:apply`
   call-site `with.override` > `false`. The walk bakes the resolved boolean
   into each entry.
-- Bare `require("defaults")` in a sidecar is deliberately unsupported (a
-  sidecar is `loadfile`'d from the user's tree, not a package module); use
+- Bare `require("defaults")` in a dots.lua is deliberately unsupported (it is
+  `loadfile`'d from the user's tree, not a package module); use
   `dofile(PROJECT_DIR .. "/...")` as above.
-- A broken sidecar (syntax error, non-table return, raised predicate) fails
+- A broken dots.lua (syntax error, non-table return, raised predicate) fails
   the walk loudly; nothing is silently skipped. Walk errors raise from
   `plan.tree` and surface as the `dots:apply` step's failure.
 

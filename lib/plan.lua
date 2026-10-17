@@ -1,12 +1,11 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- The tree walk: walk a source tree of files (+ `dots.lua` sidecars) into
--- the entry list every action consumes. This is the producer half — no
+-- The tree walk: walk a source tree of files into the entry list every action consumes. This is the producer half — no
 -- action semantics live here. All reads are HOST-side (the tree lives in
 -- the project repo).
 --
 -- Settled semantics implemented here (do not reopen):
--- - a sidecar is the complete, self-contained policy for its own directory;
+-- - a dots.lua is the complete, self-contained policy for its own directory;
 --   there is no inheritance and no cross-directory merging.
 -- - `$default_attrs` carries ATTRIBUTES ONLY, for files in this directory with no
 --   explicit entry; `absent`/`skip` inside it are an error.
@@ -26,9 +25,9 @@ local M = {}
 
 local AUTO_IGNORE = { [".git"] = true, [".makac"] = true, ["dots.lua"] = true }
 
---- Load the dots.lua sidecar in dir, if any. Returns the table, or nil when
---- the directory carries no sidecar. Raises on a load error — a broken
---- sidecar must fail loudly, not be silently skipped.
+--- Load dir's dots.lua policy, if any. Returns the table, or nil when the
+--- directory has no dots.lua. Raises on a load error — a broken dots.lua
+--- must fail loudly, not be silently skipped.
 function M.load_sidecar(dir)
 	local path = dir .. "/dots.lua"
 	if makac.fs.stat(path) == nil then
@@ -36,22 +35,22 @@ function M.load_sidecar(dir)
 	end
 	local chunk, lerr = loadfile(path)
 	if not chunk then
-		error(("plan: cannot load sidecar '%s': %s"):format(path, tostring(lerr)), 2)
+		error(("plan: cannot load dots.lua '%s': %s"):format(path, tostring(lerr)), 2)
 	end
-	-- a sidecar may reference the workflow global PROJECT_DIR; when running
-	-- data-dir-less (plain `makac script.lua`) it is nil and such sidecars
-	-- error here — surface it as a clear load error either way.
+	-- a dots.lua may reference the workflow global PROJECT_DIR; when running
+	-- data-dir-less (plain `makac script.lua`) it is nil and such dots.lua
+	-- files error here — surface it as a clear load error either way.
 	local ok, res = pcall(chunk)
 	if not ok then
-		error(("plan: sidecar '%s' failed: %s"):format(path, tostring(res)), 2)
+		error(("plan: dots.lua '%s' failed: %s"):format(path, tostring(res)), 2)
 	end
 	if type(res) ~= "table" then
-		error(("plan: sidecar '%s' must return a table, got %s"):format(path, type(res)), 2)
+		error(("plan: dots.lua '%s' must return a table, got %s"):format(path, type(res)), 2)
 	end
 	return res
 end
 
--- attributes a sidecar entry / $default_attrs may carry (copy-through set)
+-- attributes a dots.lua entry / $default_attrs may carry (copy-through set)
 local function merge_attrs(dst, src, what, path)
 	if src == nil then
 		return
@@ -67,7 +66,7 @@ local function merge_attrs(dst, src, what, path)
 	end
 end
 
--- resolve the override policy for one file name, given the sidecar table
+-- resolve the override policy for one file name, given the dots.lua table
 -- and the call-site default. Returns a boolean.
 local function resolve_override(entry_attrs, sidecar, name, call_default, scpath)
 	if entry_attrs and entry_attrs.override ~= nil then
@@ -101,9 +100,9 @@ local function readlink(path)
 end
 
 local function is_ignored(ignores, relpath)
-	-- ignores: list of { base = <sidecar dir rel, "" at root>, patterns = {...} }.
-	-- A sidecar's patterns are relative to ITS directory and apply to its
-	-- whole subtree (that is the only reading under which a `**` pattern is
+	-- ignores: list of { base = <dots.lua dir rel, "" at root>, patterns = {...} }.
+	-- Patterns from a directory's dots.lua are relative to THAT directory and
+	-- apply to its whole subtree (that is the only reading under which a `**` pattern is
 	-- meaningful; this is subtree REACH, not attribute inheritance).
 	for _, ig in ipairs(ignores) do
 		local sub
@@ -201,7 +200,7 @@ function M.synthesize(relpath, abspath, name, sidecar, st, dir, opts)
 
 	if st.type == "link" then
 		if entry.link ~= nil then
-			-- explicit link entry in a sidecar: the source node's bytes are
+			-- explicit link entry in dots.lua: the source node's bytes are
 			-- irrelevant, ship the symlink as written
 		elseif entry.reproduce == true then
 			-- recreate the source symlink at dest as-is
@@ -236,7 +235,7 @@ end
 --- opts.dest: destination prefix (default "~"); opts.override: call-site
 --- override default (default false). Returns a plain list of entry tables
 --- whose order is deterministic (paths sorted). Raises on walk errors
---- (broken sidecar, broken symlink, ...), never silently skips.
+--- (broken dots.lua, broken symlink, ...), never silently skips.
 function M.tree(root, opts)
 	opts = opts or {}
 	local dest = opts.dest or "~"

@@ -1,8 +1,8 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
 -- workflows/defaults.lua — shared attribute sets and renderers for the
--- example tree. Lives OUTSIDE the tree, next to the workflow; sidecars pull
--- it in with `dofile(PROJECT_DIR .. "/...")`.
+-- example tree. Lives OUTSIDE the tree, next to the workflow; the tree's
+-- dots.lua files pull it in with `dofile(PROJECT_DIR .. "/...")`.
 --
 -- Renderer inputs must be explicit and stable — the rendered output is what
 -- gets hashed, so a nondeterministic input (timestamp, hostname) manifests

@@ -1,8 +1,8 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
 --
--- cases/apply.lua — dots:apply + the tree walk/sidecar machinery through the
--- CLI: a nested tree with a $default_attrs/$ignore sidecar and a renderer entry,
+-- cases/apply.lua — dots:apply + the tree walk/dots.lua machinery through the
+-- CLI: a nested tree with $default_attrs/$ignore in dots.lua and a renderer entry,
 -- idempotence, single-file drift repair, conflict as non-fatal data (and its
 -- strict=true counterpart), check=true reporting without writing, and the
 -- files= escape hatch.
@@ -13,7 +13,7 @@ local bb = require("bbctx")
 
 h.suite("apply")
 
--- renderer definitions available to sidecars via dofile(PROJECT_DIR .. ...)
+-- renderer definitions available to dots.lua files via dofile(PROJECT_DIR .. ...)
 local DEFAULTS_LUA = [[
 return {
   upper = function(content) return content:upper() end,
@@ -28,7 +28,7 @@ return {
 --   tree/app/theme.conf  (uppercased on the way out)
 -- The override split exercises the precedence (per-entry beats $override)
 -- and the two failure modes: drift under $override repairs, a pre-existing
--- differing file under override=false conflicts. NOTE: sidecars are
+-- differing file under override=false conflicts. NOTE: dots.lua policies are
 -- per-directory policies (no inheritance), so each directory names its own.
 local FIXTURE = {
 	["top.conf"] = "top-level\n",
@@ -73,7 +73,7 @@ local function fixture_project(ctx)
 	return proj
 end
 
-h.case("apply", "tree_with_sidecar_all_files_land", function(ctx)
+h.case("apply", "tree_with_policy_all_files_land", function(ctx)
 	local proj = fixture_project(ctx)
 	local dest = ctx.path("home")
 	bb.writef(ctx, "proj/w.lua", apply_workflow(dest))

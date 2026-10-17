@@ -1,6 +1,6 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
--- sidecar for the example tree root.
+-- policy for the example tree root.
 local d = dofile(PROJECT_DIR .. "/workflows/defaults.lua")
 
 return {

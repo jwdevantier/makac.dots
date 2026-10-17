@@ -87,9 +87,9 @@ for _, p in ipairs(r.out.failed) do print("FAILED " .. p.path) end
 ]]):format(dest, extra or "")
 end
 
--- nested dirs, a $default_attrs mode sidecar at the root, and a renderer in a
+-- nested dirs, a dots.lua with a $default_attrs mode at the root, and a renderer in a
 -- subdirectory (renderer definitions dofile'd from the project root —
--- renders on the HOST, ships the rendered bytes). Sidecars are policies of
+-- renders on the HOST, ships the rendered bytes). dots.lua files are policies of
 -- their OWN directory: sub/ carries $override = true so drift there repairs
 -- itself, while the tree root keeps the call-site default (override = false)
 -- so a pre-existing differing main.conf is a conflict.

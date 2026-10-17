@@ -1,8 +1,8 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
 -- The dots package: a desired-state converger for dotfiles.
--- Walk a tree of source files (+ `dots.lua` sidecars) and materialize the
--- plan onto a target (host or SSH remote).
+-- Walk a tree of source files, observing each directory's `dots.lua`
+-- policies, and materialize the result onto a target (host or SSH remote).
 --
 -- This file only EXPORTS; the implementations live in lib/ modules. Actions
 -- are functions of a single `with` table (the action contract, makac core —

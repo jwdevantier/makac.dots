@@ -3,7 +3,7 @@
 -- SPDX-License-Identifier: BSD-2-Clause
 --
 -- workflows/example.lua — the dogfood example: the workflow IS the manifest.
--- Applies the sample tree (workflows/example-src/, with a sidecar-driven
+-- Applies the sample tree (workflows/example-src/, with a dots.lua-driven
 -- renderer, a $default_attrs mode and a $ignore glob) to a scratch destination.
 -- Safe to run as-is:
 --
@@ -18,7 +18,7 @@ if dest == nil or dest == "" then
 	dest = "/tmp/makac-dots-example-" .. (os.getenv("USER") or "nobody")
 end
 
--- the tree lives next to this workflow; sidecars inside it find shared
+-- the tree lives next to this workflow; dots.lua files inside it find shared
 -- renderer definitions at workflows/defaults.lua via dofile(PROJECT_DIR ...)
 local r = step({
 	uses = "dots:apply",

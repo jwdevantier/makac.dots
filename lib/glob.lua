@@ -4,7 +4,7 @@
 -- `*` matches within one path segment, `**` across segments, a trailing
 -- `/` matches a directory and everything under it. Only `*` and `**` are
 -- special (character classes are not supported). Patterns are relative to
--- the sidecar's directory.
+-- the directory carrying the dots.lua.
 
 local M = {}
 

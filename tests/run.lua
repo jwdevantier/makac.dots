@@ -748,8 +748,8 @@ r
 	t.eq(dests(plan.tree(root)), "~/real.conf")
 end)
 
-t.case("tree: nested sidecars are independent", function()
-	local root = txtar.unpack([[root sidecar: mode 0644; sub sidecar: mode 0600 + ignores tmp/
+t.case("tree: nested dots.lua policies are independent", function()
+	local root = txtar.unpack([[root dots.lua: mode 0644; sub dots.lua: mode 0600 + ignores tmp/
 -- dots.lua --
 return { ["$default_attrs"] = { mode = "0644" } }
 -- sub/dots.lua --
@@ -793,13 +793,13 @@ p
 	t.eq(m["~/bar.local"].override, false, "per-entry false wins over the predicate")
 	t.eq(m["~/baz.local"].override, true, "$override function selected")
 	t.eq(m["~/plain.conf"].override, false, "$override function rejected")
-	-- call-site true: the sidecar still wins
+	-- call-site true: dots.lua still wins
 	local m2 = by_dest(plan.tree(root, { override = true }))
 	t.eq(m2["~/plain.conf"].override, false)
 	t.eq(m2["~/foo.conf"].override, true)
-	-- a sidecar-less tree takes the call-site value
+	-- a dots.lua-less tree takes the call-site value
 	local root2 = txtar.unpack("-- x.conf --\nx\n")
-	t.eq(plan.tree(root2, { override = true })[1].override, true, "call-site default when no sidecar")
+	t.eq(plan.tree(root2, { override = true })[1].override, true, "call-site default when no dots.lua")
 	t.eq(plan.tree(root2)[1].override, false, "false when nothing says otherwise")
 	-- boolean $override
 	local root3 = txtar.unpack([[-- dots.lua --
@@ -810,7 +810,7 @@ y
 	t.eq(plan.tree(root3)[1].override, true, "plain boolean $override")
 end)
 
-t.case("tree: renderer captured from a sidecar entry", function()
+t.case("tree: renderer captured from a dots.lua entry", function()
 	local root = txtar.unpack([[-- dots.lua --
 return { ["r.conf"] = { renderer = function(c) return c:upper() end } }
 -- r.conf --
@@ -848,7 +848,7 @@ return { ["dangling"] = { reproduce = true } }]])
 	t.eq(m3["~/dangling"].link, "missing-target")
 end)
 
-t.case("tree: load_sidecar, and sidecar using PROJECT_DIR", function()
+t.case("tree: load_sidecar, and dots.lua using PROJECT_DIR", function()
 	local root = txtar.unpack([[-- shared.lua --
 return { mode = '0600' }
 -- f.conf --
@@ -861,9 +861,9 @@ return { ["$default_attrs"] = d }]])
 	-- PROJECT_DIR is the makac.dots project root when tests run under it
 	makac.fs.write_file(tostring(PROJECT_DIR) .. "/shared-in-project.lua", "return { mode = '0600' }")
 	local m = by_dest(plan.tree(root))
-	t.eq(m["~/f.conf"].mode, "0600", "sidecar composed via dofile(PROJECT_DIR .. ...)")
+	t.eq(m["~/f.conf"].mode, "0600", "dots.lua composed via dofile(PROJECT_DIR .. ...)")
 	makac.exec({ "rm", "-f", tostring(PROJECT_DIR) .. "/shared-in-project.lua" })
-	-- a broken sidecar is a loud error, not a skip
+	-- a broken dots.lua is a loud error, not a skip
 	wf(root .. "/dots.lua", "this is not lua")
 	local ok, err = pcall(plan.load_sidecar, root)
 	t.truthy(not ok)
