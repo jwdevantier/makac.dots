@@ -848,13 +848,13 @@ return { ["dangling"] = { reproduce = true } }]])
 	t.eq(m3["~/dangling"].link, "missing-target")
 end)
 
-t.case("tree: load_sidecar, and dots.lua using PROJECT_DIR", function()
+t.case("tree: load_dotsfile, and dots.lua using PROJECT_DIR", function()
 	local root = txtar.unpack([[-- shared.lua --
 return { mode = '0600' }
 -- f.conf --
 f
 ]])
-	t.eq(plan.load_sidecar(root), nil, "nil when absent")
+	t.eq(plan.load_dotsfile(root), nil, "nil when absent")
 	wf(root .. "/dots.lua", [[
 local d = dofile(PROJECT_DIR .. "/shared-in-project.lua")
 return { ["$default_attrs"] = d }]])
@@ -865,7 +865,7 @@ return { ["$default_attrs"] = d }]])
 	makac.exec({ "rm", "-f", tostring(PROJECT_DIR) .. "/shared-in-project.lua" })
 	-- a broken dots.lua is a loud error, not a skip
 	wf(root .. "/dots.lua", "this is not lua")
-	local ok, err = pcall(plan.load_sidecar, root)
+	local ok, err = pcall(plan.load_dotsfile, root)
 	t.truthy(not ok)
 	t.contains(tostring(err), "dots.lua")
 end)

@@ -28,7 +28,7 @@ local AUTO_IGNORE = { [".git"] = true, [".makac"] = true, ["dots.lua"] = true }
 --- Load dir's dots.lua policy, if any. Returns the table, or nil when the
 --- directory has no dots.lua. Raises on a load error — a broken dots.lua
 --- must fail loudly, not be silently skipped.
-function M.load_sidecar(dir)
+function M.load_dotsfile(dir)
 	local path = dir .. "/dots.lua"
 	if makac.fs.stat(path) == nil then
 		return nil
@@ -68,11 +68,11 @@ end
 
 -- resolve the override policy for one file name, given the dots.lua table
 -- and the call-site default. Returns a boolean.
-local function resolve_override(entry_attrs, sidecar, name, call_default, scpath)
+local function resolve_override(entry_attrs, dots, name, call_default, dotspath)
 	if entry_attrs and entry_attrs.override ~= nil then
 		return entry_attrs.override == true
 	end
-	local pol = sidecar and sidecar["$override"]
+	local pol = dots and dots["$override"]
 	if pol ~= nil then
 		if type(pol) == "boolean" then
 			return pol
@@ -80,12 +80,12 @@ local function resolve_override(entry_attrs, sidecar, name, call_default, scpath
 		if type(pol) == "function" then
 			local ok, r = pcall(pol, name)
 			if not ok then
-				error(("plan: $override in '%s' raised for '%s': %s"):format(scpath, name, tostring(r)), 3)
+				error(("plan: $override in '%s' raised for '%s': %s"):format(dotspath, name, tostring(r)), 3)
 			end
 			return r == true
 		end
 		error(("plan: '$override' in '%s' must be a boolean or function(name) -> bool, got %s")
-			:format(scpath, type(pol)), 3)
+			:format(dotspath, type(pol)), 3)
 	end
 	return call_default == true
 end
@@ -125,26 +125,26 @@ end
 -- walk dir (absolute), producing entries for everything under it.
 -- rel = dir's path relative to the tree root ("" at the top).
 local function walk_dir(dir, rel, ignores, opts, entries)
-	local sidecar = M.load_sidecar(dir)
-	local scpath = dir .. "/dots.lua"
+	local dots = M.load_dotsfile(dir)
+	local dotspath = dir .. "/dots.lua"
 
-	if sidecar ~= nil then
-		local def = sidecar["$default_attrs"]
+	if dots ~= nil then
+		local def = dots["$default_attrs"]
 		if def ~= nil then
 			if type(def) ~= "table" then
-				error(("plan: '$default_attrs' in '%s' must be a table of attributes"):format(scpath))
+				error(("plan: '$default_attrs' in '%s' must be a table of attributes"):format(dotspath))
 			end
 			if def.absent ~= nil or def.skip ~= nil then
-				error(("plan: '$default_attrs' in '%s' carries attributes only; 'absent'/'skip' are never inherited"):format(scpath))
+				error(("plan: '$default_attrs' in '%s' carries attributes only; 'absent'/'skip' are never inherited"):format(dotspath))
 			end
 			if def.override ~= nil then
-				error(("plan: '$default_attrs' in '%s' carries attributes only; override is a policy — use '$override'"):format(scpath))
+				error(("plan: '$default_attrs' in '%s' carries attributes only; override is a policy — use '$override'"):format(dotspath))
 			end
 		end
-		local ign = sidecar["$ignore"]
+		local ign = dots["$ignore"]
 		if ign ~= nil then
 			if type(ign) ~= "table" then
-				error(("plan: '$ignore' in '%s' must be a list of glob patterns"):format(scpath))
+				error(("plan: '$ignore' in '%s' must be a list of glob patterns"):format(dotspath))
 			end
 			ignores = { table.unpack(ignores) }
 			ignores[#ignores + 1] = { base = rel, patterns = ign }
@@ -174,7 +174,7 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 				if st.type == "dir" then
 					walk_dir(child_abs, child_rel, ignores, opts, entries)
 				else
-					entries[#entries + 1] = M.synthesize(child_rel, child_abs, name, sidecar, st, dir, opts)
+					entries[#entries + 1] = M.synthesize(child_rel, child_abs, name, dots, st, dir, opts)
 				end
 			end
 		end
@@ -182,21 +182,21 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 end
 
 -- build the entry for one walked source node (file, symlink, or other)
-function M.synthesize(relpath, abspath, name, sidecar, st, dir, opts)
-	local scpath = dir .. "/dots.lua"
-	local explicit = sidecar and sidecar[name]
+function M.synthesize(relpath, abspath, name, dots, st, dir, opts)
+	local dotspath = dir .. "/dots.lua"
+	local explicit = dots and dots[name]
 	if explicit ~= nil and type(explicit) ~= "table" then
-		error(("plan: entry '%s' in '%s' must be a table"):format(name, scpath))
+		error(("plan: entry '%s' in '%s' must be a table"):format(name, dotspath))
 	end
 
 	local entry = {}
-	merge_attrs(entry, explicit, "entry '" .. name .. "'", scpath)
-	if sidecar and sidecar["$default_attrs"] and explicit == nil then
-		merge_attrs(entry, sidecar["$default_attrs"], "$default_attrs", scpath)
+	merge_attrs(entry, explicit, "entry '" .. name .. "'", dotspath)
+	if dots and dots["$default_attrs"] and explicit == nil then
+		merge_attrs(entry, dots["$default_attrs"], "$default_attrs", dotspath)
 	end
 
 	entry.dest = opts.dest .. "/" .. relpath
-	entry.override = resolve_override(explicit, sidecar, name, opts.call_override, scpath)
+	entry.override = resolve_override(explicit, dots, name, opts.call_override, dotspath)
 
 	if st.type == "link" then
 		if entry.link ~= nil then
