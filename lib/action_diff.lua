@@ -46,7 +46,7 @@ function M.diff(with)
 	local target = with.target or makac.host
 	local report = diff.report(entries, root, target)
 
-	local out = { entries = report.items, differing = {}, mode_drift = {}, ok = {}, skipped = {}, failed = {} }
+	local out = { entries = report.items, differing = {}, mode_drift = {}, owner_drift = {}, ok = {}, skipped = {}, failed = {} }
 	for _, it in ipairs(report.items) do
 		if it.skipped then
 			out.skipped[#out.skipped + 1] = it.dest
@@ -55,13 +55,14 @@ function M.diff(with)
 		else
 			if it.content then out.differing[#out.differing + 1] = it.dest end
 			if it.mode then out.mode_drift[#out.mode_drift + 1] = it.dest end
-			if not it.content and not it.mode then out.ok[#out.ok + 1] = it.dest end
+			if it.owner then out.owner_drift[#out.owner_drift + 1] = it.dest end
+			if not it.content and not it.mode and not it.owner then out.ok[#out.ok + 1] = it.dest end
 		end
 	end
 
 	-- reporting changes nothing: changed is fixed false (convention per the
 	-- built-in facts action); the drift signal lives in out
-	out.drifted = (#out.differing > 0) or (#out.mode_drift > 0)
+	out.drifted = (#out.differing > 0) or (#out.mode_drift > 0) or (#out.owner_drift > 0)
 	local text = diff.render(report.items)
 	if text ~= "" then io.stdout:write(text .. "\n") end
 	return { changed = false, out = out }

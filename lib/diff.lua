@@ -90,6 +90,32 @@ function M.check_entry(entry, root, target)
 		return item
 	end
 
+	-- directory entries: drift on EXISTENCE + mode/owner only, never content
+	-- (a directory has no bytes to diff)
+	if entry.dir == true then
+		if kind == "absent" then
+			item.content = ("new: directory %s"):format(path)
+			return item
+		end
+		if kind ~= "dir" then
+			item.content = ("%s exists as a %s, entry wants a directory"):format(path, kind)
+			return item
+		end
+		if entry.mode ~= nil then
+			local have = materialize.remote_mode(target, path)
+			if have and not materialize.mode_eq(have, entry.mode) then
+				item.mode = { have = have, want = entry.mode }
+			end
+		end
+		if entry.owner ~= nil then
+			local have = materialize.remote_owner(target, path)
+			if have and not materialize.owner_eq(have, entry.owner) then
+				item.owner = { have = have, want = entry.owner }
+			end
+		end
+		return item
+	end
+
 	-- materialize entries
 	local desired, derr = materialize.desired_bytes(entry, root)
 	if not desired then
@@ -142,6 +168,9 @@ function M.render(items)
 		if it.content then contents[#contents + 1] = it.content end
 		if it.mode then
 			modes[#modes + 1] = ("MODE %s: %s -> %s"):format(it.dest, it.mode.have, it.mode.want)
+		end
+		if it.owner then
+			modes[#modes + 1] = ("OWNER %s: %s -> %s"):format(it.dest, it.owner.have, it.owner.want)
 		end
 	end
 	local out = {}

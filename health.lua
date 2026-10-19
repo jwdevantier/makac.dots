@@ -27,6 +27,15 @@ return function(health, pkg_name)
 		health.error("sh not found", "a POSIX shell must be on $PATH")
 	end
 
+	-- diff3 is a runner-side dependency of lib/merge3.lua only — deployment
+	-- never needs it, so a missing diff3 is informational, not an error.
+	local d3 = on_path("diff3")
+	if d3 then
+		health.ok("diff3 found at " .. d3 .. " (merge3 conflict machinery available)")
+	else
+		health.info("diff3 not on $PATH (fine; only frontends using lib/merge3 need it)")
+	end
+
 	health.start("hashing")
 
 	-- hashing is host-side via makac.fs.sha256 (portable — no sha256sum is
@@ -42,7 +51,7 @@ return function(health, pkg_name)
 	end
 
 	health.start("library")
-	for _, mod in ipairs({ "glob", "journal", "materialize", "plan", "action_file", "action_apply" }) do
+	for _, mod in ipairs({ "glob", "diff", "materialize", "plan", "snapshot", "classify", "prune", "merge3", "action_file", "action_dir", "action_apply", "action_diff", "action_prune" }) do
 		local ok, err = pcall(require, pkg_name .. "/" .. mod)
 		if ok then
 			health.ok("require " .. pkg_name .. "/" .. mod)

@@ -282,3 +282,29 @@ print("SSH count changed=" .. #r2.out.changed)
 	local rr = rsh(("cd '%s' && find . -type f | sort | xargs sha256sum"):format(dest))
 	h.eq(rr.stdout, l.stdout, "byte-identical trees (same relphs + same sha256)")
 end)
+
+rcase("dir_attrs_remote", function(ctx, dest)
+	-- directory attrs over ssh: ["."] entries land the managed dir with its
+	-- mode before children, and rerun converges
+	local proj = bb.make_project(ctx, "proj", {
+		["top.conf"] = "top\n",
+		app = {
+			["f.conf"] = "f\n",
+			["dots.lua"] = [[return { ["."] = { mode = "0700" } }]],
+		},
+	})
+	local r = run_apply(ctx, proj, dest)
+	h.eq(r.code, 0, "exit: " .. r.stderr)
+	h.contains(r.stdout, "APPLY count failed=0")
+	h.eq(rmode(dest .. "/app"), "700", "dir mode applied remotely")
+	h.eq(rcat(dest .. "/app/f.conf"), "f\n", "child file landed")
+	h.eq(rcat(dest .. "/top.conf"), "top\n")
+	-- drift on the dir mode is repaired remotely
+	rsh(("chmod 755 '%s/app'"):format(dest))
+	local r2 = run_apply(ctx, proj, dest)
+	h.eq(r2.code, 0, "exit: " .. r2.stderr)
+	h.contains(r2.stdout, "APPLY changed=true", "dir mode drift detected")
+	h.eq(rmode(dest .. "/app"), "700", "dir mode repaired")
+	local r3 = run_apply(ctx, proj, dest)
+	h.contains(r3.stdout, "APPLY changed=false", "converged: dir entry ok")
+end)

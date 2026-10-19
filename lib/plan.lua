@@ -1,7 +1,7 @@
 -- SPDX-FileCopyrightText: 2026 Jesper Wendel Devantier
 -- SPDX-License-Identifier: BSD-2-Clause
 -- The tree walk: walk a source tree of files into the entry list every action consumes. This is the producer half — no
--- action semantics live here. All reads are HOST-side (the tree lives in
+-- action semantics target here. All reads are HOST-side (the tree lives in
 -- the project repo).
 --
 -- Settled semantics implemented here (do not reopen):
@@ -28,6 +28,17 @@
 --   and passed as the second argument to every renderer/entry function —
 --   the channel for shared, reusable template functions that closures
 --   cannot serve.
+-- - ['.'] in a dots.lua = attrs for the DIRECTORY containing that dots.lua
+--   (allowed keys: mode, owner, skip — anything else is a loud walk error).
+--   The dir entry { dest=..., relpath=..., dir=true, ... } is emitted FIRST,
+--   before its children (managed parents exist, with modes, before files
+--   land; the walk is depth-first). $default_attrs never fills dir entries.
+--   The root's ['.'] (attrs on DEST itself) is emitted with relpath "." —
+--   the DEST-itself footgun gate lives in dots:apply/dots:dir, not the walk.
+-- - $tree in the ROOT dots.lua names the owner identity of the whole tree
+--   (the snapshot records it per entry so several projects can share one
+--   DEST and prune only their own). Recognized AT THE ROOT ONLY; unknown
+--   `$` keys stay silently ignored.
 
 local glob = require("./glob")
 
@@ -181,6 +192,14 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 	local dots = M.load_dotsfile(dir)
 	local dotspath = dir .. "/dots.lua"
 
+	if rel == "" and dots ~= nil and dots["$tree"] ~= nil then
+		-- $tree: the owner identity of this tree (root dots.lua only)
+		if type(dots["$tree"]) ~= "string" or dots["$tree"] == "" then
+			error(("plan: '$tree' in '%s' must be a non-empty string"):format(dotspath))
+		end
+		opts.capture.tree = dots["$tree"]
+	end
+
 	if dots ~= nil then
 		local def = dots["$default_attrs"]
 		if def ~= nil then
@@ -201,6 +220,38 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 			end
 			ignores = { table.unpack(ignores) }
 			ignores[#ignores + 1] = { base = rel, patterns = ign }
+		end
+		local de = dots["."]
+		if de ~= nil then
+			-- ['.'] = attrs for the directory CONTAINING this dots.lua. Allowed
+			-- keys: mode, owner, skip — anything else (renderer/content/src/
+			-- link/absent make no sense for a directory node; '$' keys remain the
+			-- dots.lua's own policies) is a loud walk error naming the file+key.
+			if type(de) ~= "table" then
+				error(("plan: '.' entry in '%s' must be a table of directory attributes")
+					:format(dotspath))
+			end
+			for k in pairs(de) do
+				if type(k) ~= "string" or (k ~= "mode" and k ~= "owner" and k ~= "skip") then
+					error(("plan: '.' entry in '%s' carries ONLY mode/owner/skip "
+						.. "(directory attributes) — got key %q")
+						:format(dotspath, tostring(k)))
+				end
+			end
+			-- emit BEFORE descending into children: managed parents exist (with
+			-- their modes) before files land (the walk is depth-first). The
+			-- root's '.' entry gets relpath "." and dest == the dest prefix
+			-- exactly. $default_attrs deliberately never fills here: its
+			-- contract is "attributes for files with no explicit entry".
+			local dentry = {
+				dest = (rel == "") and opts.dest or (opts.dest .. "/" .. rel),
+				relpath = (rel == "") and "." or rel,
+				dir = true,
+				mode = de.mode,
+				owner = de.owner,
+			}
+			if de.skip == true then dentry.skip = true end
+			entries[#entries + 1] = dentry
 		end
 	end
 
@@ -246,7 +297,8 @@ local function walk_dir(dir, rel, ignores, opts, entries)
 	if dots ~= nil then
 		local virtual = {}
 		for k, v in pairs(dots) do
-			if type(k) == "string" and k:sub(1, 1) ~= "$" and not seen[k] then
+			-- NOTE: '.' (directory attrs) is handled at walk entry, never here
+			if type(k) == "string" and k:sub(1, 1) ~= "$" and k ~= "." and not seen[k] then
 				if k:find("/", 1, true) then
 					error(("plan: entry '%s' in '%s': names are plain file names, no '/'")
 						:format(k, dotspath))
@@ -310,6 +362,7 @@ function M.synthesize(relpath, abspath, name, dots, ctx, st, dir, opts)
 	end
 
 	entry.dest = opts.dest .. "/" .. relpath
+	entry.relpath = relpath -- dest_root-relative; classify/snapshot key by it
 	entry.override = resolve_override(explicit, dots, {
 		name = name, relpath = relpath, abspath = abspath, dest = entry.dest,
 	}, opts.call_override, dotspath)
@@ -366,6 +419,7 @@ function M.synthesize_virtual(relpath, name, val, ctx, dots, dir, opts)
 		merge_attrs(entry, dots["$default_attrs"], "$default_attrs", dotspath)
 	end
 	entry.dest = opts.dest .. "/" .. relpath
+	entry.relpath = relpath -- dest_root-relative; classify/snapshot key by it
 	entry.override = resolve_override(produced, dots, {
 		name = name, relpath = relpath, abspath = nil, dest = entry.dest,
 	}, opts.call_override, dotspath)
@@ -375,7 +429,9 @@ end
 --- dots.tree(root, opts) — walk a source tree into an ordered entry list.
 --- opts.dest: destination prefix (default "~"); opts.override: call-site
 --- override default (default false). Returns a plain list of entry tables
---- whose order is deterministic (paths sorted). Raises on walk errors
+--- whose order is deterministic (paths sorted), plus the root dots.lua's
+--- $tree owner id (nil when unset; the apply call-site decides the
+--- precedence with.tree > $tree > basename(root)). Raises on walk errors
 --- (broken dots.lua, broken symlink, ...), never silently skips.
 function M.tree(root, opts)
 	opts = opts or {}
@@ -390,11 +446,13 @@ function M.tree(root, opts)
 	end
 	root = root:gsub("/+$", "")
 	local entries = {}
+	local capture = {}
 	walk_dir(root, "", {}, {
 		dest = dest,
 		call_override = opts.override == true,
+		capture = capture,
 	}, entries)
-	return entries
+	return entries, capture.tree
 end
 
 return M

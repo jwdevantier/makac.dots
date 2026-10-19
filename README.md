@@ -7,8 +7,9 @@ a dotfiles manager — a chezmoi replacement: walk a tree of source files (with
 `dots.lua` policy files for ignore/override/materialize rules) and converge the
 result onto a target, host or SSH remote alike.
 
-**Status: functional** — `dots:file`, `dots:link` and `dots:apply` are
-implemented and tested on host and SSH targets.
+**Status: functional** — `dots:file`, `dots:link`, `dots:dir`, `dots:apply`,
+`dots:diff` and `dots:prune` are implemented and tested on host and SSH
+targets.
 
 - makac: <https://github.com/jwdevantier/makac>
 - makac documentation: <https://jwdevantier.github.io/makac/>
@@ -55,7 +56,7 @@ Entry fields (`with`):
 | `mode`      | `chmod` (shell-out on the target)                                  |
 | `owner`     | `chown user:group` (shell-out)                                     |
 | `renderer`  | `function(content) -> string`; its output is what is hashed/written|
-| `override`  | replace an existing differing file when true (default false: conflict) |
+| `override`  | overwrite a target file that was edited since deploy (default false: such user edits are never silently clobbered) |
 | `reproduce` | source symlinks: `true` recreates the symlink, false dereferences  |
 | `check`     | report would-change without writing                                |
 | `target`    | makac target (default `makac.host`)                                |
@@ -69,6 +70,38 @@ are temp-then-move atomic.
 cannot carry `mode`/`owner`; a real node at `dest` is never replaced by a
 symlink.
 
+### `dots:dir` — managed directories
+
+Ensure a **directory** exists with the desired attributes:
+`with = { dest = ..., mode = "0700", owner = ..., skip = ..., check = ...,
+target = ... }` — those are the ONLY valid keys (`content`/`src`/`link`/
+`renderer`/`absent` are rejected: a directory has no bytes and pruning
+removes only *empty* dirs via `rmdir`). The leaf is `mkdir -p`'d together
+with any unmanaged gap; an existing non-directory node at `dest` is a loud
+failure (never replaced). `mode`/`owner` apply on creation and on drift,
+normally reached through `dots:apply` dispatch of the walk's
+[`["."]`](#trees-and-dotslua) entries.
+
+One special case, the **DEST-itself footgun**: a `["."]` entry in the
+tree ROOT's dots.lua asks for mode/owner on the destination prefix itself —
+usually `~`, the user's whole home. Applying that requires the explicit
+acknowledgment `manage_dest_dir = true` on `dots:apply`; otherwise the entry
+fails with a clear error naming the flag:
+
+```lua
+-- tree/dots.lua: manage the DESTINATION ITSELF — footgun!
+return { ["."] = { mode = "0700" } }   -- chmod 0700 ~ — almost surely wrong
+
+-- you must acknowledge this at the dots:apply call-site:
+step { uses = "dots:apply", name = "d", with = {
+  root = "tree", manage_dest_dir = true,
+} }
+```
+
+Bare `dots:dir` calls (an explicit `dest`) need no gate — the explicit dest
+IS the acknowledgment. `dots:diff` and check mode report the drift either
+way (the gate protects writes, not visibility).
+
 ### `dots:apply` — the primary action
 
 The normal way to use the package: point it at a source tree (see
@@ -79,9 +112,13 @@ file in it:
 local r = step { uses = "dots:apply", name = "dotfiles", with = {
   root = "tree",        -- source tree relative to the project root
   dest = "~",           -- destination prefix (default "~")
-  override = false,     -- call-site policy: may differing files be replaced?
+  override = false,     -- may user edits to deployed files be overwritten?
+  -- manage_dest_dir = true,   -- REQUIRED to apply a root ["."] entry
+                              -- (mode/owner on DEST itself — footgun!)
   -- target = my_ssh_target,  -- default makac.host
   -- check = true,       -- report would-change, write nothing
+  -- quiet = true,       -- no per-entry failure chatter on stderr (frontends
+                         -- that present out.failed themselves use this)
   -- strict = true,      -- abort the workflow if any file fails
 } }
 print("changed: " .. #r.out.changed, "failed: " .. #r.out.failed)
@@ -100,20 +137,39 @@ happened:
 r = {
   changed = bool,           -- true iff at least one entry changed
   out = {
-    changed = { "~/a.conf", ... },        -- entries that changed
-    ok      = { "~/b.conf", ... },        -- already at the desired state
-    failed  = { { path = ..., err = ... }, ... },  -- conflicts and errors
-    skipped = { "~/c.conf", ... },        -- entries with skip = true
+    changed  = { "~/a.conf", ... },      -- entries that changed
+    ok       = { "~/b.conf", ... },      -- already at the desired state
+    failed   = { { path = ..., err = ... }, ... },  -- conflicts and errors
+    skipped  = { "~/c.conf", ... },      -- entries with skip = true
+    target_only = { "~/d.conf", ... },     -- user-edited target files, source
+                                         -- unchanged: reported, never written
+                                         -- (override = true would overwrite)
   },
   err = "...",              -- set ONLY with strict = true and failures present
 }
 ```
 
-Failure reasons are also written to stderr as they happen. `check = true`
+Failure reasons are written to stderr as they happen (unless `quiet = true`)
+— without the `step '...' (uses '...') failed:` ceremony: `out.failed[].err`
+carries the action's own message. `check = true`
 propagates to every entry — nothing is written, but conflicts still count
 as failures (a conflict means the state cannot converge). Entries created
 by the walk get their `src` resolved against `root` by the inner steps;
 absolute or `~`-prefixed `src` values are used as-is.
+
+**Override means "may I overwrite user edits" — nothing else.** Before
+each file is applied, apply classifies it against the deployed snapshot and
+the target file (`lib/classify.lua`):
+
+- target untouched since deploy, source changed → **fast-forwarded**: applied
+  even under `override = false` (there are no user edits to destroy)
+- target edited, source unchanged → **target-only**: reported in `out.target_only`,
+  never written; `override = true` overwrites the user edits (that is
+  precisely what the flag means)
+- both moved apart → **diverged**: a conflict (`out.failed`) unless
+  `override = true`
+- no snapshot entry exists → the classic 2-way compare: exists-and-differs
+  is a conflict, exists-and-same is ok, missing is deployed
 
 ### `dots:diff` — drift reporting (never writes)
 
@@ -121,7 +177,7 @@ Same inputs as `dots:apply` (`root` **or** `files`, `dest`, `target`), same
 walk and planning, but instead of converging it *reports* what differs.
 Humans get a two-section report on stdout — unified diffs for content drift
 (patch(1)-readable via the `a/<dest>` / `b/<dest>` labels), then one line
-per file with mode drift:
+per file with mode/owner drift:
 
 ```
 ## contents
@@ -133,8 +189,12 @@ per file with mode drift:
 MODE ~/.ssh/config: 777 -> 0600
 ```
 
+Directory entries (`["."]`) never produce content diffs: drift on a
+managed directory is reported as MODE/OWNER lines in the modes section.
+
 Machines get the same in `out`: `entries` (full per-entry items with the
-diff text), plus `differing` / `mode_drift` / `ok` / `skipped` / `failed`
+diff text), plus `differing` / `mode_drift` / `owner_drift` / `ok` /
+`skipped` / `failed`
 destination lists, and `out.drifted` (bool) says whether anything drifts.
 `changed` is always **false** — reporting changes nothing (same convention
 as makac's built-in `facts` action). New files diff
@@ -142,12 +202,115 @@ from `/dev/null`; `absent` entries diff toward it; symlink drift is a
 one-line note. Nothing is ever written — including per-entry failures,
 which land in `failed` as data, mirroring `dots:apply`.
 
-## Managed journal
+### `dots:prune` — reconcile the snapshot store with the plan
 
-Every path successfully written/removed/chmod'd is recorded under
-`.makac/dots/<target>/managed` in the project's data dir (deduped, sorted;
-journal writes are skipped in check mode and never fail a step). This is the
-basis for a future `dots:prune`.
+When a file leaves the tree, its deployed snapshot entry remains — an
+**orphan**. `dots:prune` walks `root` into the current plan and acts on the
+orphans of its own tree. It is **non-interactive** (makac workflows never
+block on stdin; the interactive frontend lives in makac.mydots):
+
+```lua
+local r = step { uses = "dots:prune", name = "prune", with = {
+  root = "tree",          -- walked exactly like dots:apply
+  dest = "~",             -- destination prefix (default "~")
+  -- tree = "mydots",     -- owner id override; same precedence as apply
+  policy = "report",      -- "report" (default) | "delete" | "forget"
+  -- check = true,         -- like "report", whatever the policy
+  -- strict = true,        -- abort the workflow if any orphan fails
+} }
+```
+
+Policies:
+
+- `report` — no mutation; everything is output (`would_delete`,
+  `would_forget`).
+- `delete` — remove the target node AND drop the snapshot entry. Drift (the
+  target bytes differ from what was deployed — user edits) is **reported** in
+  `out.deleted[]` but does not stop the delete: the policy was explicit.
+  Orphaned **directories** are removed only when EMPTY (`rmdir` — recursion
+  is deliberately impossible); a non-empty orphaned directory is reported in
+  `out.skipped_dirs` and kept.
+- `forget` — drop the snapshot entry only; the target file stays.
+
+Orphans whose target node already **vanished** are auto-forgotten under any
+mutating policy (nothing to delete; asking would be noise). Entries owned
+by **foreign trees** are never touched — they are counted and logged
+(`3 entries owned by 'bootstrap' — skipped`).
+
+```lua
+r = {
+  changed = bool,           -- true iff something was deleted or forgotten
+  out = {
+    orphans   = { { relpath=..., meta=..., target_kind=<str|nil>, drifted=<bool> }, ... },
+    vanished  = { "b.conf", ... },        -- target node gone (auto-forget)
+    deleted   = { { relpath=..., drifted=<bool> }, ... },   -- policy=delete
+    forgotten = { "c.conf", ... },        -- entry dropped, target left alone
+    would_delete = { { relpath=..., drifted=<bool> }, ... },-- report/check
+    would_forget = { "c.conf", ... },     -- report/check
+    foreign   = { { tree="bootstrap", count=3 }, ... },   -- reported, never touched
+    skipped_dirs = { "busyd", ... },       -- non-empty orphaned dirs, kept
+    failed    = { { path=..., err=... }, ... },             -- data; strict turns it into err
+  },
+}
+```
+
+The delete-safety signal (`drifted`) comes from the deployed snapshot: the
+target bytes are hashed and compared against what was last deployed, so prune
+knows whether an orphan still carries user edits (for links: the target target
+against the recorded one; for directories: the recorded mode/owner against
+the target attrs). Orphan listing also notes `empty` for directory orphans.
+The mechanism behind this (`lib/prune.lua`) is exported for frontends and
+never prompts.
+
+## Integration support (for frontends)
+
+Interactive integration (push/pull/merge between the target machine and the
+source tree) deliberately does NOT live in this package — makac.dots is
+non-interactive throughout ("integrate"/"reconcile" are frontend verbs). What
+it DOES provide is the complete mechanism frontend tooling (e.g. makac.mydots'
+integrate and prune commands) builds on:
+
+- the **deployed snapshot** (below) supplies the merge base per entry:
+  what was last deployed, bytes and attrs;
+- `lib/classify.lua` turns every plan entry into a 3-way state
+  (`converged` / `ff` / `target-only` / `diverged` / `new` /
+  `absent-pending`); hashes classify, bytes merge;
+- `lib/merge3.lua` merges `base` (deployed) / `target` / `source` with
+  `diff3 -m`, producing conflict-marked output with MANDATORY labels
+  (`Untracked Changes` / `Old` / `New`), plus `validate_no_markers` (verify
+  a user-resolved file is marker-free) and `parse_conflicts` (report
+  conflict count/positions). Binary content is refused loudly. `diff3` is a
+  **runner-side** dependency (POSIX/GNU diffutils) only workflows that call
+  into `merge3` need — deployment itself never does.
+
+The interactive side — opening `$EDITOR` over the marked file, deciding
+pull-vs-push, prompting — belongs to the frontend, not here.
+
+## Deployed snapshot
+
+`dots:apply` records what it last deployed **on the target itself**, under
+`<dest>/.makac/dots/snapshot/` (dest is the apply `dest` prefix, usually
+`~`): one entry per managed path, named by the hash of its dest-relative
+path. Each entry is a tiny header (strict magic line + one compact JSON
+line carrying the owner tree, kind, mode/owner, and content hash) followed
+by the deployed bytes verbatim, so later runs can distinguish "user edited
+this target" from "the source changed" without host-side state. The store is
+mode `0700`/`0600`; writes are atomic, skipped in check mode, and never
+fail a step. Removals **drop** the entry — the store never keeps bytes for
+a target path that is deliberately gone.
+
+Each entry carries an **owner id** (`tree`), resolved once per apply:
+`with.tree` > `$tree` in the tree's ROOT `dots.lua` > `basename(root)`.
+Several projects may deploy into the same DEST; prune/integrate act only on
+their own owner and report foreign entries. **Doc rule: one owner name per
+DEST** — a foreign tree reusing your owner id is indistinguishable from
+you, and no code can detect it (their prune would offer to delete your target
+files).
+
+Only `dots:apply` records — bare `dots:file`/`dots:link` calls (or `files=`
+entries without `with.tree`, or with dests outside the dest prefix) deploy
+fine but are **untracked**: no snapshot entry, hence no prune/integrate
+coverage. Apply emits one log line per run when that happens.
 
 ## Trees and `dots.lua`
 
@@ -157,8 +320,18 @@ the entry list is deterministic:
 
 - Each file yields an entry: `dest = <dest> .. "/" .. <relpath>` (call-site
   `dest` defaults to `~`), `src = <relpath>`, plus attributes from dots.lua.
-- **Empty directories ship nothing** — a dir exists at the destination only
-  as the parent of a managed file. Parent dirs are `mkdir -p`'d on write.
+- **Directories become managed when their dots.lua carries a `["."]`
+  entry** for the directory itself — `mode`/`owner`/`skip` are the ONLY
+  allowed keys (anything else, e.g. `renderer` or `absent`, is a loud walk
+  error naming the file and key). Dir entries (`{ dir = true, ... }`) are
+  emitted BEFORE their children (managed parents exist, with modes, before
+  files land; the walk is depth-first), `$default_attrs` never fills them,
+  and `dots:apply` dispatches them to `dots:dir`. A `["."]` in the tree
+  ROOT's dots.lua manages DEST itself and requires
+  `manage_dest_dir = true` on `dots:apply` (see `dots:dir`).
+- **Empty directories ship nothing** — an unmanaged dir exists at the
+  destination only as the parent of a managed file. Parent dirs are
+  `mkdir -p`'d on write.
 - `.git`, `.makac` and `dots.lua` are auto-ignored, everywhere.
 - **Source symlinks are dereferenced**: the destination gets the resolved
   file content. A broken symlink is a loud walk error, unless the entry has
@@ -173,6 +346,10 @@ inheritance, no merging across directories:
 ```lua
 local d = dofile(PROJECT_DIR .. "/defaults.lua")   -- shared policy via dofile
 return {
+  -- ROOT dots.lua only: the tree's owner id for the deployed snapshot
+  -- (one owner name per DEST; with.tree at the apply call-site wins):
+  ["$tree"] = "mydots",
+
   -- per-file entries (keys are names in THIS directory):
   ["sshd_config"] = { owner = "root:root", mode = "0600" },
 
@@ -180,12 +357,16 @@ return {
   -- absent/skip/override inside $default_attrs are an error):
   ["$default_attrs"]  = d,
 
+  -- attrs for THIS DIRECTORY ITSELF (mode/owner/skip only):
+  ["."]          = { mode = "0700" },
+
   -- globs relative to this directory: * one segment, ** across segments,
   -- "name/" a whole subtree (never descended into):
   ["$ignore"]   = { "*.bak", "secrets/", "**/.DS_Store" },
 
   -- which files here may replace a differing existing file at the
-  -- destination (a "conflict" otherwise). A boolean applies to all files
+  -- destination (otherwise target edits are protected: see `override` on
+  -- dots:apply/dots:file). A boolean applies to all files
   -- here. A function is called once per file with a table:
   --   file.name     basename ("init.lua")
   --   file.relpath  path within the tree ("nvim/init.lua")
@@ -233,6 +414,10 @@ Notes:
 - Override precedence: per-entry `override` > `$override` > the `dots:apply`
   call-site `with.override` > `false`. The walk bakes the resolved boolean
   into each entry.
+- `$tree` names the tree's owner id for the deployed snapshot. It is
+  recognized in the ROOT dots.lua only (elsewhere it is silently ignored,
+  like any unknown `$` key); precedence at apply time is `with.tree` >
+  `$tree` > `basename(root)`.
 - Bare `require("defaults")` in a dots.lua is deliberately unsupported (it is
   `loadfile`'d from the user's tree, not a package module); use
   `dofile(PROJECT_DIR .. "/...")` as above.
@@ -276,8 +461,8 @@ Why it works this way, condensed:
 
 ## Potential future work
 
-- `dots:prune` / `unapply` on top of the managed journal (stow's `-D`, but
-  correct and remote-capable).
+- `unapply` on top of the deployed snapshot (stow's `-D`, but
+  correct and remote-capable); `dots:prune` already handles orphan removal.
 - A `secret = true` entry flag: force `0600` and redact content from step
   names/messages/`out`. Not a secret store — fetching stays delegated to the
   workflow (env vars, `pass`, sops, age).

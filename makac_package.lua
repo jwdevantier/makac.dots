@@ -10,17 +10,23 @@
 -- result table ({ err?, changed?, skipped?, out? }).
 
 local action_file = require("./action_file")
+local action_dir = require("./action_dir")
 local action_apply = require("./action_apply")
 local action_diff = require("./action_diff")
+local action_prune = require("./action_prune")
 
 return {
 	actions = {
 		-- ensure ONE file/symlink at dest matches the entry
 		file = action_file.file,
 		link = action_file.link,
+		-- ensure ONE directory exists with the desired mode/owner
+		dir = action_dir.dir,
 		-- walk a tree (or take with.files) and converge every entry
 		apply = action_apply.apply,
 		-- walk a tree and REPORT drift (unified diffs + mode lines); never writes
 		diff = action_diff.diff,
+		-- reconcile the snapshot store with the plan (orphan delete/forget/report)
+		prune = action_prune.prune,
 	},
 }

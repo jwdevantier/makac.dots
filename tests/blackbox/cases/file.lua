@@ -3,7 +3,7 @@
 --
 -- cases/file.lua — dots:file behavior exercised purely through the CLI:
 -- change detection, idempotence across runs, conflict/override, mode +
--- drift repair, absent, '~' expansion. Host target; destinations live in the
+-- drift repair, absent, '~' expansion. Host target; destinations target in the
 -- per-case tmp dir (or under HOME=ctx.tmp), never the real home.
 -- Contract under test: lib/action_file.lua (dots:file).
 

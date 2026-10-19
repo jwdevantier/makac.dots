@@ -153,6 +153,32 @@ function M.remote_mode(target, path)
 	return statf(target, path, "%a")
 end
 
+--- Entry names in dir on the target (no "."/".."), sorted. An absent dir
+--- yields an EMPTY TABLE (callers treat "no dir" as "no entries"); a path
+--- that exists but is not a directory is an error. Names are split on
+--- newlines — sufficient for package-managed dirs (e.g. the snapshot store,
+--- whose entry names are lowercase hex); not for arbitrary user dirs with
+--- newline-containing filenames. `ls -1A` is GNU/BusyBox/macOS portable.
+function M.readdir(target, dir)
+	local kind, kerr = M.remote_kind(target, dir)
+	if not kind then return nil, kerr end
+	if kind == "absent" then return {} end
+	if kind ~= "dir" then
+		return nil, "readdir: '" .. dir .. "' is a " .. kind .. ", not a directory"
+	end
+	local ok, res = pcall(target.run, target, { "ls", "-1A", "--", dir })
+	if not ok then return nil, tostring(res) end
+	if res.code ~= 0 then
+		return nil, "ls '" .. dir .. "' failed: " .. (res.stderr or "")
+	end
+	local names = {}
+	for line in (res.stdout or ""):gmatch("[^\n]+") do
+		names[#names + 1] = line
+	end
+	table.sort(names)
+	return names
+end
+
 --- "user:group" of the remote path.
 function M.remote_owner(target, path)
 	return statf(target, path, "%U:%G")
@@ -248,6 +274,18 @@ function M.remove_path(target, path)
 	if not ok then return nil, tostring(res) end
 	if res.code ~= 0 then
 		return nil, "rm '" .. path .. "' failed: " .. (res.stderr or "")
+	end
+	return true
+end
+
+--- Remove a directory via rmdir: succeeds ONLY when the directory is empty
+--- (that refusal is the entire point — there is deliberately no recursive
+--- removal in the target interface).
+function M.rmdir(target, path)
+	local ok, res = pcall(target.run, target, { "rmdir", "--", path })
+	if not ok then return nil, tostring(res) end
+	if res.code ~= 0 then
+		return nil, "rmdir '" .. path .. "' failed: " .. (res.stderr or "")
 	end
 	return true
 end

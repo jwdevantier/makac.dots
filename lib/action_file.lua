@@ -4,21 +4,24 @@
 -- matches the entry.
 -- Target-agnostic via lib/materialize.lua; per-file failures set `err`
 -- (dots:apply turns them into data).
+--
+-- dots:file / dots:link are PURE primitives: they never record snapshot
+-- entries themselves (dots:apply owns snapshot recording). To spare apply a
+-- re-render, a successful content write reports the deployed bytes in
+-- out.deployed_bytes (for links: the stored target string).
 
 local materialize = require("./materialize")
-local journal = require("./journal")
 
 local M = {}
 
---- Record a path in the managed journal after a
---- successful mutation. Called on write / remove / chmod / chown / symlink
---- sites (all already guarded against check mode). NEVER fails the step: a
---- lost journal line is recoverable, a hard error would break applies for no
---- benefit. No-ops when there is no data dir (makac.data_dir unset).
-local function record(target, path)
-	local dd = makac.data_dir
-	if dd == nil then return end
-	pcall(journal.update, dd, tostring(target.name or "unknown"), { path })
+-- Refuse dests inside the store directory: .makac/dots/ is makac's own
+-- on-target state (the snapshot); the plan walk auto-ignores it, but the
+-- files= escape hatch and bare dests bypass the walk.
+local function under_dotmakac(dest)
+	return dest:find("/.makac/dots/", 1, true) ~= nil
+		or dest:match("/%.makac/dots$") ~= nil
+		or dest:match("^%.makac/dots/") ~= nil
+		or dest == ".makac/dots"
 end
 
 local function fail(msg)
@@ -46,6 +49,9 @@ function M.file(with)
 	end
 	if type(with.dest) ~= "string" or with.dest == "" then
 		return fail("'dest' is required and must be a non-empty string")
+	end
+	if under_dotmakac(with.dest) then
+		return fail(("dest '%s' is under .makac/dots/ (makac's own on-target state); refusing"):format(with.dest))
 	end
 	if with.skip then
 		return { skipped = true }
@@ -80,7 +86,6 @@ function M.file(with)
 		end
 		local rok, rerr = materialize.remove_path(target, path)
 		if not rok then return fail(tostring(rerr)) end
-		record(target, path)
 		return { changed = true, out = { path = path } }
 	end
 
@@ -123,7 +128,6 @@ function M.file(with)
 		if not mok then return fail(tostring(merr)) end
 		local wok, werr = materialize.write_file(target, path, bytes)
 		if not wok then return fail(tostring(werr)) end
-		record(target, path)
 	end
 
 	-- mode / owner: after a write they are always applied when specified (the
@@ -142,7 +146,6 @@ function M.file(with)
 			if not check then
 				local aok, aerr = materialize.apply_mode(target, path, with.mode)
 				if not aok then return fail(tostring(aerr)) end
-				record(target, path)
 			end
 		end
 	end
@@ -158,12 +161,18 @@ function M.file(with)
 			if not check then
 				local aok, aerr = materialize.apply_owner(target, path, with.owner)
 				if not aok then return fail(tostring(aerr)) end
-				record(target, path)
 			end
 		end
 	end
 
-	return { changed = changed, out = { path = path, sha256 = dsha } }
+	local out = { path = path, sha256 = dsha }
+	if wrote and not check then
+		-- the deployed bytes, so dots:apply can record the snapshot entry
+		-- without re-rendering
+		out.deployed_bytes = bytes
+		out.deployed_sha256 = dsha
+	end
+	return { changed = changed, out = out }
 end
 
 --- dots:link — opt-in stow-style symlink entries. with.link is the
@@ -174,6 +183,9 @@ function M.link(with)
 	end
 	if type(with.dest) ~= "string" or with.dest == "" then
 		return lfail("'dest' is required and must be a non-empty string")
+	end
+	if under_dotmakac(with.dest) then
+		return lfail(("dest '%s' is under .makac/dots/ (makac's own on-target state); refusing"):format(with.dest))
 	end
 	if with.mode ~= nil or with.owner ~= nil then
 		return lfail("a symlink cannot carry mode/owner")
@@ -212,7 +224,6 @@ function M.link(with)
 		end
 		local rok, rerr = materialize.remove_path(target, path)
 		if not rok then return lfail(tostring(rerr)) end
-		record(target, path)
 		return { changed = true, out = { path = path } }
 	end
 
@@ -224,8 +235,8 @@ function M.link(with)
 		if not mok then return lfail(tostring(merr)) end
 		local sok, serr = materialize.symlink(target, path, with.link, false)
 		if not sok then return lfail(tostring(serr)) end
-		record(target, path)
-		return { changed = true, out = { path = path } }
+		return { changed = true,
+			out = { path = path, deployed_bytes = with.link, deployed_sha256 = makac.sha256(with.link) } }
 	end
 
 	if kind == "link" then
@@ -243,8 +254,8 @@ function M.link(with)
 		end
 		local sok, serr = materialize.symlink(target, path, with.link, true)
 		if not sok then return lfail(tostring(serr)) end
-		record(target, path)
-		return { changed = true, out = { path = path } }
+		return { changed = true,
+			out = { path = path, deployed_bytes = with.link, deployed_sha256 = makac.sha256(with.link) } }
 	end
 
 	-- file / dir / other: a real node at dest is never replaced by a symlink

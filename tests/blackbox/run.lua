@@ -41,6 +41,8 @@ print("# testing: " .. bin)
 
 require("file")
 require("apply")
+require("prune")
+require("dir")
 require("ssh_real") -- needs jwd@workpc.lan; skips itself when unreachable
 
 harness.main(bin)
